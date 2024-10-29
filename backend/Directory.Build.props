@@ -1,0 +1,20 @@
+<Project>
+
+	<PropertyGroup>
+		<AssemblyName>ActivityGameBackend.$(MSBuildProjectName)</AssemblyName>
+		<Copyright>Mihaly Varga</Copyright>
+		<Version>0.1.0</Version>
+		<TargetFramework>net8.0</TargetFramework>
+		<LangVersion>12</LangVersion>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<IsPackable>false</IsPackable>
+		<Nullable>enable</Nullable>
+		<RootNamespace>ActivityGameBackend.$(MSBuildProjectName)</RootNamespace>
+		<SolutionDir>$(MSBuildThisFileDirectory)</SolutionDir>
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<AnalysisMode>AllEnabledByDefault</AnalysisMode>
+		<NoWarn>SA1009;CA1040;CA1848;CA1305;ASP0019;CA1032;SA1010</NoWarn>
+	</PropertyGroup>
+</Project>
