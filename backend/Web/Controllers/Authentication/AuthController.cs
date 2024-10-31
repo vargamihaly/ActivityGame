@@ -72,7 +72,7 @@ public class AuthController(IUserService userService, IIdentityService identityS
         if (string.IsNullOrEmpty(id))
             return Unauthorized(new ApiResponse { Success = false, Message = "User not authenticated" });
 
-        var user = await userService.GetUserAsync(id);
+        var user = await userService.GetUserByIdAsync(id);
         if (user != null)
         {
             return Ok(new ApiResponse<UserResponse>
@@ -113,7 +113,7 @@ public class AuthController(IUserService userService, IIdentityService identityS
         if (string.IsNullOrEmpty(id))
             return Unauthorized(new ApiResponse { Success = false, Message = "User not authenticated" });
 
-        var user = await userService.GetUserAsync(id);
+        var user = await userService.GetUserByIdAsync(id);
         if (user == null)
             return NotFound(new ApiResponse { Success = false, Message = "User not found" });
 
@@ -150,7 +150,7 @@ public class AuthController(IUserService userService, IIdentityService identityS
         var email = root.GetProperty("email").GetString() ?? throw new ArgumentException("Email is missing", nameof(userInfo));
         var name = root.GetProperty("name").GetString() ?? throw new ArgumentException("Name is missing", nameof(userInfo));
 
-        var existingUser = await userService.GetUserAsync(userId);
+        var existingUser = await userService.GetUserByIdAsync(userId);
         return existingUser ?? await userService.CreateUserAsync(userId, email, name);
     }
 

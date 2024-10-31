@@ -34,7 +34,7 @@ public class GameService(
             throw new PlayerAlreadyInGameException(userId, activeGame.Id);
         }
 
-        var player = await userService.GetUserAsync(userId) ?? throw new UserNotFoundException(userId);
+        var player = await userService.GetUserByIdAsync(userId) ?? throw new UserNotFoundException(userId);
 
         var createdGame = await dataProvider.CreateGameAsync(player.Id);
         await dataProvider.UpdateGameAsync(createdGame.Id, GameUpdate.WithHost(player.Id));
@@ -67,7 +67,7 @@ public class GameService(
 
         gameValidator.ValidateGameState(game, GameStatus.Waiting);
 
-        var user = await userService.GetUserAsync(userId)
+        var user = await userService.GetUserByIdAsync(userId)
             ?? throw new UserNotFoundException(userId);
 
         await dataProvider.AddPlayerToGameAsync(game.Id, user.Id);
@@ -137,7 +137,7 @@ public class GameService(
     {
         logger.LogInformation("Starting game {GameId} for user {UserId}", gameId, currentUserId);
         var game = await GetGameDetailsAsync(gameId);
-        var player = await userService.GetUserAsync(currentUserId)
+        var player = await userService.GetUserByIdAsync(currentUserId)
             ?? throw new UserNotFoundException(currentUserId);
 
         gameValidator.ValidateGameState(game, GameStatus.Waiting);
@@ -163,7 +163,7 @@ public class GameService(
             gameId, actingPlayerId, guessingPlayerId);
 
         var game = await GetGameDetailsAsync(gameId);
-        _ = await userService.GetUserAsync(actingPlayerId)
+        _ = await userService.GetUserByIdAsync(actingPlayerId)
             ?? throw new UserNotFoundException(actingPlayerId);
 
         gameValidator.ValidateGameState(game, GameStatus.InProgress);

@@ -87,7 +87,7 @@ public class GamesController(
             });
         }
 
-        //var user = await userService.GetUserAsync(CurrentUserId);
+        //var user = await userService.GetUserByIdAsync(CurrentUserId);
         //if (user is null)
         //{
         //    return BadRequest(new ApiResponse

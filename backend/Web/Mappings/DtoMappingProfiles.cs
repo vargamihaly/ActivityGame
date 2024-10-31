@@ -1,6 +1,8 @@
 using ActivityGameBackend.Application.Games;
+using ActivityGameBackend.Application.Statistics;
 using ActivityGameBackend.Application.Users;
 using ActivityGameBackend.Web.Controllers.Game.Response;
+using ActivityGameBackend.Web.Controllers.Statistics.Response;
 using AutoMapper;
 
 namespace ActivityGameBackend.Web.Mappings;
@@ -34,5 +36,23 @@ public sealed class DtoMappingProfiles : Profile
                     : null))
             .ForMember(dest => dest.EnabledMethods, opt =>
                 opt.MapFrom(src => src.EnabledMethods.ToList()));
+
+        CreateMap<UserStatistics, GetUserStatisticsResponse>()
+            .ForMember(dest => dest.Username, opt => opt.MapFrom(src => src.Username))
+            .ForMember(dest => dest.GamesPlayed, opt => opt.MapFrom(src => src.GamesPlayed))
+            .ForMember(dest => dest.GamesWon, opt => opt.MapFrom(src => src.GamesWon))
+            .ForMember(dest => dest.GamesLost, opt => opt.MapFrom(src => src.GamesLost))
+            .ForMember(dest => dest.WinRate, opt => opt.MapFrom(src => src.WinRate))
+            .ForMember(dest => dest.AverageScore, opt => opt.MapFrom(src => src.AverageScore));
+
+        CreateMap<GlobalStatistics, GetGlobalStatisticsResponse>()
+            .ForMember(dest => dest.AverageScore, opt => opt.MapFrom(src => src.AverageScore))
+            .ForMember(dest => dest.WinRate, opt => opt.MapFrom(src => src.WinRate))
+            .ForMember(dest => dest.LossRate, opt => opt.MapFrom(src => src.LossRate))
+            .ForMember(dest => dest.PlayerRankings, opt => opt.MapFrom(src => src.PlayerRankings));
+
+        CreateMap<PlayerRanking, PlayerRankingResponse>()
+            .ForMember(dest => dest.Username, opt => opt.MapFrom(src => src.Username))
+            .ForMember(dest => dest.TotalScore, opt => opt.MapFrom(src => src.TotalScore));
     }
 }

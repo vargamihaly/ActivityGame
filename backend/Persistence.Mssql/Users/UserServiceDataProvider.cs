@@ -7,7 +7,7 @@ namespace ActivityGameBackend.Persistence.Mssql.Users;
 public class UserServiceDataProvider(ApplicationDbContext context, IMapper mapper) : IUserServiceDataProvider
 {
 
-    public async Task<User?> GetUserAsync(string id)
+    public async Task<User?> GetUserByIdAsync(string id)
     {
         var userEntity = await context.Users.FirstOrDefaultAsync(u => u.Id == id);
         return mapper.Map<User>(userEntity);
