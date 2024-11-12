@@ -32,7 +32,8 @@ public class GameServiceDataProvider(ApplicationDbContext context, IMapper mappe
             Status = GameStatus.Waiting,
             TimerInMinutes = 2,
             MaxScore = 10,
-            EnabledMethods = new List<MethodType> { MethodType.Description },
+            EnabledMethods = [MethodType.Description],
+            CreatedAtUtc = DateTime.UtcNow,
         };
 
         var gamePlayer = new GamePlayerEntity

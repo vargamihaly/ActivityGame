@@ -1,204 +1,224 @@
-import React, {useEffect, useState} from 'react';
-import {useNavigate} from 'react-router-dom';
-import {useAuth} from '@/context/AuthContext';
-import {useCreateGame, useJoinGame, useLeaveLobby} from "@/hooks/gameHooks";
-import {useToast} from "@/hooks/use-toast";
-import GameActionCard from "@/components/Main/GameActionCard";
-import UserLoading from "@/components/Main/UserLoading";
+// src/components/Main/Main.tsx
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/context/AuthContext';
+import { useCreateGame, useJoinGame, useLeaveLobby } from "@/hooks/gameHooks";
+import { useToast } from "@/hooks/use-toast";
+import { useGame } from "@/context/GameContext";
+import { Trophy, Users, Play, LogIn, ArrowRight } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { GAME_STATUS } from "@/interfaces/GameTypes";
+import { isValidGuid } from '@/lib/guidUtils';
+import { Statistics } from "@/components/Statistics/Statistics";
 import JoinGameDialog from "@/components/Main/JoinGameDialog";
-import {useGame} from "@/context/GameContext";
-import {Button} from "@/components/ui/button";
-import {Card, CardContent, CardHeader, CardTitle} from "@/components/ui/card";
-import {GAME_STATUS} from "@/interfaces/GameTypes";
-import {isValidGuid} from '@/lib/guidUtils';
-
+import UserLoading from "@/components/Main/UserLoading";
 
 const Main: React.FC = () => {
     const navigate = useNavigate();
-    const {user} = useAuth();
+    const { user } = useAuth();
     const [joinGameId, setJoinGameId] = useState('');
     const [isJoinDialogOpen, setIsJoinDialogOpen] = useState(false);
-    const {currentGame, isInGame, refreshGameDetails} = useGame();
-    const {toast} = useToast();
+    const { currentGame, isInGame, refreshGameDetails } = useGame();
+    const { toast } = useToast();
 
     const createGameMutation = useCreateGame();
     const joinGameMutation = useJoinGame();
     const leaveLobbyMutation = useLeaveLobby();
 
-    // Logging the initial state and context
-    useEffect(() => {
-        console.log('Main component mounted');
-        console.log('User:', user);
-        console.log('Current game:', currentGame);
-        console.log('Is in game:', isInGame);
-    }, [user, currentGame, isInGame]);
+    const handleLeaveLobby = async (gameId: string) => {
+        try {
+            await leaveLobbyMutation.mutateAsync(gameId);
+            console.log('Left lobby successfully');
+        } catch (error) {
+            console.error('Error leaving lobby:', error);
+            toast({
+                title: "Error",
+                description: "Failed to leave current lobby",
+                variant: "destructive",
+            });
+        }
+    };
 
-    const handleCreateGame = () => {
-        console.log('Create game clicked');
-        if (isInGame) {
-            console.log('Already in a game');
-            let isInLobby = currentGame?.status === GAME_STATUS.Waiting;
-            console.log('Is in lobby:', isInLobby);
-
-            if (isInLobby) {
-                let confirmNewGame = window.confirm("You are already in a lobby. Creating a new game will remove you from the current lobby. Are you sure you want to continue?");
-                console.log('User confirmed new game:', confirmNewGame);
-
-                if (!confirmNewGame) {
-                    return;
-                } else {
-                    console.log('Leaving current lobby...');
-                    leaveLobbyMutation.mutateAsync(currentGame!.id).then(() => {
-                        console.log('Left lobby successfully');
-                    }).catch((error) => {
-                        console.error('Error leaving lobby:', error);
-                    });
-                }
-            } else {
-                console.log('Already in an active game, showing error toast');
-                toast({
-                    title: "Error",
-                    description: "You are already in a game.",
-                    variant: "destructive",
-                });
-                return;
-            }
+    const confirmLobbyAction = async (): Promise<boolean> => {
+        if (!isInGame || !currentGame || currentGame.status !== GAME_STATUS.Waiting) {
+            return true;
         }
 
-        console.log('Creating new game...');
+        const confirmed = window.confirm(
+            "You are already in a lobby. This action will remove you from the current lobby. Continue?"
+        );
+
+        if (confirmed) {
+            await handleLeaveLobby(currentGame.id);
+        }
+
+        return confirmed;
+    };
+
+    const handleCreateGame = async () => {
+        if (isInGame && currentGame?.status === GAME_STATUS.InProgress) {
+            toast({
+                title: "Active Game in Progress",
+                description: "Please finish or leave your current game first.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        if (!(await confirmLobbyAction())) {
+            return;
+        }
+
         createGameMutation.mutate(undefined, {
             onSuccess: async (response) => {
                 const gameId = response.data?.gameId;
-                console.log('Create game response:', response.data);
                 if (gameId) {
-                    console.log('Game created successfully, refreshing game details');
-                    refreshGameDetails();
+                    await refreshGameDetails();
                     navigate(`/lobby/${gameId}`);
                 }
             },
-            onError: (error) => {
-                console.error('Error creating game:', error);
+            onError: () => {
+                toast({
+                    title: "Error",
+                    description: "Failed to create game",
+                    variant: "destructive",
+                });
             }
         });
-    }
+    };
 
-    const handleJoinGame = () => {
-        console.log('Join game clicked');
-        let isValid = isValidGuid(joinGameId);
-        console.log('Is valid game ID:', isValid);
-
-        if (!isValid) {
+    const handleJoinGame = async () => {
+        if (!isValidGuid(joinGameId)) {
             toast({
-                title: "Error",
+                title: "Invalid Game ID",
                 description: "Please enter a valid game ID",
                 variant: "destructive",
             });
             return;
         }
 
-        if (isInGame) {
-            console.log('Already in a game');
-            let isInLobby = currentGame?.status === GAME_STATUS.Waiting;
-            console.log('Is in lobby:', isInLobby);
-
-            if (isInLobby) {
-                let confirmNewGame = window.confirm("You are already in a lobby. Joining a new game will remove you from the current lobby. Are you sure you want to continue?");
-                console.log('User confirmed joining new game:', confirmNewGame);
-
-                if (!confirmNewGame) {
-                    return;
-                } else {
-                    console.log('Leaving current lobby...');
-                    leaveLobbyMutation.mutateAsync(currentGame!.id).then(() => {
-                        console.log('Left lobby successfully');
-                    }).catch((error) => {
-                        console.error('Error leaving lobby:', error);
-                    });
-                }
-            } else {
-                console.log('Already in an active game, showing error toast');
-                toast({
-                    title: "Error",
-                    description: "You are already in a game.",
-                    variant: "destructive",
-                });
-                return;
-            }
+        if (isInGame && currentGame?.status === GAME_STATUS.InProgress) {
+            toast({
+                title: "Active Game in Progress",
+                description: "Please finish or leave your current game first.",
+                variant: "destructive",
+            });
+            return;
         }
 
-        console.log('Joining game:', joinGameId);
+        if (!(await confirmLobbyAction())) {
+            return;
+        }
+
         joinGameMutation.mutate(joinGameId, {
             onSuccess: async () => {
-                console.log('Joined game successfully, refreshing game details');
-                refreshGameDetails();
+                await refreshGameDetails();
                 navigate(`/lobby/${joinGameId}`);
             },
-            onError: (error) => {
-                console.error('Error joining game:', error);
+            onError: () => {
+                toast({
+                    title: "Error",
+                    description: "Failed to join game",
+                    variant: "destructive",
+                });
             }
         });
-    }
-
-    const handleReturnToGame = () => {
-        if (currentGame) {
-            console.log('Returning to game:', currentGame.id);
-            if (currentGame.status === GAME_STATUS.InProgress) {
-                navigate(`/game/${currentGame.id}`);
-            } else {
-                navigate(`/lobby/${currentGame.id}`);
-            }
-        }
     };
 
-    if (!user) {
-        console.log('No user, rendering UserLoading');
-        return <UserLoading />;
-    }
+    const handleReturnToGame = () => {
+        if (!currentGame) return;
 
-    console.log('Rendering main content for user:', user);
+        const path = currentGame.status === GAME_STATUS.InProgress
+            ? `/game/${currentGame.id}`
+            : `/lobby/${currentGame.id}`;
+        navigate(path);
+    };
+
+    if (!user) return <UserLoading />;
 
     return (
-        <div className="container mx-auto p-4">
-            <div className="max-w-4xl mx-auto">
-                <h1 className="text-3xl font-bold text-center mb-8">Welcome, {user.username}</h1>
+        <div className="max-w-6xl mx-auto p-6 space-y-8">
+            {/* Welcome Section */}
+            <div className="text-center space-y-2">
+                <h1 className="text-3xl font-bold text-gray-900">Welcome back, {user.username}</h1>
+                <p className="text-gray-600">Ready for your next challenge?</p>
+            </div>
 
-                {isInGame && currentGame && (
-                    <Card className="mb-8">
-                        <CardHeader>
-                            <CardTitle>Ongoing Game</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <p>You are currently in a game (ID: {currentGame.id})</p>
-                            <p>Game Status: {currentGame.status}</p>
-                            <Button onClick={handleReturnToGame} className="mt-4">
+            {/* Active Game Alert */}
+            {isInGame && currentGame && (
+                <Card className="border-blue-200 bg-blue-50">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-lg font-medium text-blue-900">
+                            Active Game Session
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="flex items-center justify-between">
+                            <div className="space-y-1">
+                                <p className="text-blue-900">Status: {currentGame.status}</p>
+                                <p className="text-sm text-blue-700">Game ID: {currentGame.id}</p>
+                            </div>
+                            <Button
+                                onClick={handleReturnToGame}
+                                className="bg-blue-600 hover:bg-blue-700"
+                            >
                                 Return to Game
+                                <ArrowRight className="ml-2 h-4 w-4" />
                             </Button>
-                        </CardContent>
-                    </Card>
-                )}
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <GameActionCard
-                        title="Create New Game"
-                        description="Start a new game and invite your friends to join."
-                        actionText="Create Game"
-                        onAction={handleCreateGame}
-                        isLoading={createGameMutation.isPending}
-                        variant="create"
-                        disabled={isInGame && currentGame?.status === GAME_STATUS.InProgress}
+            {/* Statistics Section */}
+            <div className="mb-8">
+                <Statistics />
+            </div>
 
-                    />
-                    <GameActionCard
-                        title="Join Existing Game"
-                        description="Enter a game ID to join an existing game."
-                        actionText="Join Game"
-                        onAction={() => setIsJoinDialogOpen(true)}
-                        isLoading={false}
-                        variant="join"
-                        disabled={isInGame && currentGame?.status === GAME_STATUS.InProgress}
+            {/* Game Actions */}
+            <div className="grid md:grid-cols-2 gap-6">
+                <Card className="hover:shadow-lg transition-shadow">
+                    <CardContent className="p-6">
+                        <div className="space-y-4">
+                            <div className="flex items-center space-x-3">
+                                <div className="p-2 bg-blue-100 rounded-lg">
+                                    <Play className="w-6 h-6 text-blue-600" />
+                                </div>
+                                <h3 className="text-xl font-semibold">Create New Game</h3>
+                            </div>
+                            <p className="text-gray-600">Start a new game and invite your friends to join.</p>
+                            <Button
+                                onClick={handleCreateGame}
+                                className="w-full"
+                                disabled={isInGame && currentGame?.status === GAME_STATUS.InProgress || createGameMutation.isPending}
+                            >
+                                Create Game
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
 
-                    />
-                </div>
+                <Card className="hover:shadow-lg transition-shadow">
+                    <CardContent className="p-6">
+                        <div className="space-y-4">
+                            <div className="flex items-center space-x-3">
+                                <div className="p-2 bg-green-100 rounded-lg">
+                                    <Users className="w-6 h-6 text-green-600" />
+                                </div>
+                                <h3 className="text-xl font-semibold">Join Existing Lobby</h3>
+                            </div>
+                            <p className="text-gray-600">Enter a game ID to join a lobby.</p>
+                            <Button
+                                onClick={() => setIsJoinDialogOpen(true)}
+                                className="w-full bg-green-600 hover:bg-green-700"
+                                disabled={isInGame && currentGame?.status === GAME_STATUS.InProgress}
+                            >
+                                Join Game
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
             </div>
 
             <JoinGameDialog

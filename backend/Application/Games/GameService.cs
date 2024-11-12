@@ -174,6 +174,8 @@ public class GameService(
         await dataProvider.SetRoundWinnerAsync(round.Id, guessingPlayerId);
         await dataProvider.IncrementPlayerScoreAsync(gameId, guessingPlayerId);
 
+        game.Players.First(x => x.Id == guessingPlayerId).Score++;
+        
         logger.LogInformation("Round winner set for game {GameId}. Winner: {WinnerId}", gameId, guessingPlayerId);
 
         if (game.Players.Any(player => player.Score >= game.MaxScore))

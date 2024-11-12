@@ -14,7 +14,7 @@ import {
     postStartGameAsync,
     putGameSettingsAsync,
     postJoinGameAsync,
-    postLeaveLobbyAsync
+    postLeaveLobbyAsync, getUserStatisticsAsync, getGlobalStatisticsAsync
 } from "@/api/games-api";
 import {useGame} from "@/context/GameContext";
 
@@ -32,6 +32,8 @@ type EndTurnRequest = components["schemas"]["EndTurnRequest"];
 type UserResponseApiResponse = components["schemas"]["UserResponseApiResponse"];
 type UserResponse = components["schemas"]["UserResponse"];
 type SetUsernameRequest = components["schemas"]["SetUsernameRequest"];
+type GlobalStatisticsResponse = components["schemas"]["GetGlobalStatisticsResponse"];
+type UserStatisticsResponse = components["schemas"]["GetUserStatisticsResponse"];
 
 
 export const useCreateGame = () => {
@@ -278,5 +280,45 @@ export const useEndTurn = () => {
             toast({title: errorMessageTitle, description: errorMessage});
             throw error;
         },
+    });
+};
+
+export const useGlobalStatistics = (options = {}) => {
+    const { toast } = useToast();
+
+    return useQuery<GlobalStatisticsResponse, AxiosError<ApiResponse>>({
+        queryKey: ['globalStatistics'],
+        queryFn: async (): Promise<GlobalStatisticsResponse> => {
+            const response = await getGlobalStatisticsAsync();
+
+            if (!response.data) {
+                const errorMessage = response.message || "Failed to fetch global statistics";
+                toast({ title: errorMessageTitle, description: errorMessage });
+                throw new Error(errorMessage);
+            }
+
+            return response.data;
+        },
+        ...options,
+    });
+};
+
+export const useUserStatistics = (options = {}) => {
+    const { toast } = useToast();
+
+    return useQuery<UserStatisticsResponse, AxiosError<ApiResponse>>({
+        queryKey: ['userStatistics'],
+        queryFn: async (): Promise<UserStatisticsResponse> => {
+            const response = await getUserStatisticsAsync();
+
+            if (!response.data) {
+                const errorMessage = response.message || "Failed to fetch user statistics";
+                toast({ title: errorMessageTitle, description: errorMessage });
+                throw new Error(errorMessage);
+            }
+
+            return response.data;
+        },
+        ...options,
     });
 };

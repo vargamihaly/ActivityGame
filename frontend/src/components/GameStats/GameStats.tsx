@@ -6,11 +6,14 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Trophy, Clock, Target } from 'lucide-react';
 import {METHOD_TYPE} from "@/interfaces/GameTypes";
+import {useAuth} from "@/context/AuthContext";
 
 
 const GameStats: React.FC = () => {
     const { gameId } = useParams<{ gameId: string }>();
     const { data: gameDetails, isLoading, error } = useGameDetails(gameId!);
+    const { user } = useAuth();
+    
 
     if (isLoading) {
         return (
@@ -25,6 +28,7 @@ const GameStats: React.FC = () => {
     }
 
     const winner = gameDetails.players!.reduce((prev, current) => (prev.score! > current.score!) ? prev : current);
+    const isCurrentUserWinner = user?.id === winner.id;
 
     return (
         <div className="container mx-auto p-4 max-w-4xl">
@@ -36,14 +40,26 @@ const GameStats: React.FC = () => {
                         <Trophy className="mr-2 h-6 w-6 text-yellow-500" />
                         Winner
                     </h2>
-                    <div className="flex items-center bg-yellow-100 p-4 rounded-lg">
-                        <Avatar className="h-12 w-12 mr-4">
-                            <AvatarFallback>{winner.username![0]}</AvatarFallback>
-                        </Avatar>
-                        <div>
-                            <p className="text-xl font-bold">{winner.username}</p>
-                            <p className="text-lg">Score: {winner.score}</p>
+                    <div className={`flex flex-col items-center bg-yellow-100 p-4 rounded-lg ${isCurrentUserWinner ? 'animate-pulse' : ''}`}>
+                        {isCurrentUserWinner && (
+                            <div className="text-2xl font-bold text-yellow-600 mb-4 animate-bounce">
+                                🎉 Congratulations! You Won! 🎉
+                            </div>
+                        )}
+                        <div className="flex items-center">
+                            <Avatar className="h-12 w-12 mr-4">
+                                <AvatarFallback>{winner.username![0]}</AvatarFallback>
+                            </Avatar>
+                            <div>
+                                <p className="text-xl font-bold">{winner.username}</p>
+                                <p className="text-lg">Score: {winner.score}</p>
+                            </div>
                         </div>
+                        {isCurrentUserWinner && (
+                            <p className="mt-4 text-center text-yellow-700">
+                                Amazing job! You've proven your skills in this game! 🏆
+                            </p>
+                        )}
                     </div>
                 </CardContent>
             </Card>
@@ -55,7 +71,6 @@ const GameStats: React.FC = () => {
                         Game Details
                     </h2>
                     <ul className="space-y-2">
-                        <li><strong>Game ID:</strong> {gameDetails.id}</li>
                         <li><strong>Max Score:</strong> {gameDetails.maxScore}</li>
                         <li><strong>Timer:</strong> {gameDetails.timerInMinutes} minutes</li>
                         <li><strong>Enabled Methods:</strong> {gameDetails.enabledMethods!.map(method => METHOD_TYPE[method]).join(', ')}</li>

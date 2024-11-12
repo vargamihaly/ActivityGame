@@ -3,12 +3,29 @@ using ActivityGameBackend.Persistence.Mssql.ServiceCollectionExtensions;
 using ActivityGameBackend.Web.Filters;
 using ActivityGameBackend.Web.Mappings;
 using ActivityGameBackend.Web.ServiceCollectionExtensions;
+using dotenv.net;
+using dotenv.net.Utilities;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.Google;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 var environment = builder.Environment.EnvironmentName;
+
+var envFilePath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+DotEnv.Load(options: new DotEnvOptions(
+    envFilePaths: new[] { envFilePath },
+    probeForEnv: true
+));
+
+var clientId = EnvReader.GetStringValue("GOOGLE_CLIENT_ID");
+var clientSecret = EnvReader.GetStringValue("GOOGLE_CLIENT_SECRET");
+
+if (clientId is null || clientSecret is null)
+{
+    throw new InvalidOperationException("Google ClientId and ClientSecret most be provided.");
+}
+
 var configuration = new ConfigurationBuilder()
     .SetBasePath(Directory.GetCurrentDirectory())
     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
@@ -16,14 +33,6 @@ var configuration = new ConfigurationBuilder()
     .AddJsonFile($"appsettings.{environment}.local.json", optional: true)
     .AddEnvironmentVariables()
     .Build();
-
-var clientId = configuration["Authentication:Google:ClientId"];
-var clientSecret = configuration["Authentication:Google:ClientSecret"];
-
-if (clientId is null || clientSecret is null)
-{
-    throw new InvalidOperationException("Google ClientId and ClientSecret most be provided.");
-}
 
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
@@ -42,16 +51,6 @@ builder.Services.AddAuthentication(options =>
     {
         options.ClientId = clientId;
         options.ClientSecret = clientSecret;
-        // options.SaveTokens = true;
-        // options.Events = new OAuthEvents
-        // {
-        //     OnCreatingTicket = context =>
-        //     {
-        //         var accessToken = context.AccessToken;
-        //         var refreshToken = context.RefreshToken;
-        //         return Task.CompletedTask;
-        //     },
-        // };
     });
 
 builder.Services
@@ -65,7 +64,7 @@ builder.Services.AddCors(options =>
     options.AddPolicy("SignalRClientPolicy", builder =>
     {
         builder
-            .WithOrigins("http://localhost:5173") // Your frontend URL
+            .WithOrigins("http://localhost:5173")
             .AllowAnyMethod()
             .AllowAnyHeader()
             .AllowCredentials();

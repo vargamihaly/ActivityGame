@@ -33,7 +33,14 @@ const CurrentRound: React.FC<CurrentRoundProps> = ({ methodType, word, activePla
                         <AvatarFallback>{activePlayerUsername[0]}</AvatarFallback>
                     </Avatar>
                     <span className="text-lg font-medium">{activePlayerUsername}</span>
-                    {isActivePlayer && <Badge className="ml-auto bg-primary">It's your turn!</Badge>}
+                    {isActivePlayer && (
+                        <Badge
+                            variant="default"
+                            className="ml-auto bg-primary text-primary-foreground"
+                        >
+                            It's your turn!
+                        </Badge>
+                    )}
                 </div>
             </div>
         </CardContent>

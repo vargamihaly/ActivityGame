@@ -21,7 +21,7 @@ public sealed class DtoMappingProfiles : Profile
             .ForMember(dest => dest.RoundNumber, opt => opt.Ignore())
             .ForMember(dest => dest.MethodType, opt => opt.MapFrom(src => src.MethodType))
             .ForMember(dest => dest.Word, opt => opt.MapFrom(src => src.Word.Value))
-            .ForMember(dest => dest.ActivePlayerUsername, opt => opt.MapFrom(src => src.ActivePlayer));
+            .ForMember(dest => dest.ActivePlayerUsername, opt => opt.MapFrom(src => src.ActivePlayer.Username));
 
         CreateMap<Game, GameResponse>()
             .ForMember(dest => dest.Id, opt => opt.MapFrom(src => src.Id))

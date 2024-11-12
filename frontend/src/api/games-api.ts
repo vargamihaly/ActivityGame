@@ -12,6 +12,8 @@ type EndTurnRequest = components['schemas']['EndTurnRequest'];
 type UpdateGameSettingsRequest = components['schemas']['UpdateGameSettingsRequest'];
 type SetUsernameRequest = components['schemas']['SetUsernameRequest'];
 type UserResponseApiResponse = components['schemas']['UserResponseApiResponse'];
+type GlobalStatisticsResponseApiResponse = components['schemas']['GetGlobalStatisticsResponseApiResponse'];
+type UserStatisticsResponseApiResponse = components['schemas']['GetUserStatisticsResponseApiResponse'];
 
 let authToken: string | null = null;
 
@@ -46,6 +48,8 @@ const API_PATHS = {
     endTurn: '/games/end-turn',
     gameSettings: '/games/settings',
     leaveLobby: 'games/leave-lobby',
+    globalStatistics: '/statistics/statistics/global',
+    userStatistics: '/statistics/statistics/user',
 } as const;
 
 const apiCall = async <T>(method: 'get' | 'post' | 'put', url: string, data?: any): Promise<AxiosResponse<T>> => {
@@ -129,5 +133,15 @@ export const postEndTurnAsync = async (gameId: string, request: EndTurnRequest):
 
 export const putGameSettingsAsync = async (gameId: string, request: UpdateGameSettingsRequest): Promise<ApiResponse> => {
     const response = await apiCall<ApiResponse>('put', `${API_PATHS.gameSettings}/${gameId}`, request);
+    return response.data;
+};
+
+export const getGlobalStatisticsAsync = async (): Promise<GlobalStatisticsResponseApiResponse> => {
+    const response = await apiCall<GlobalStatisticsResponseApiResponse>('get', API_PATHS.globalStatistics);
+    return response.data;
+};
+
+export const getUserStatisticsAsync = async (): Promise<UserStatisticsResponseApiResponse> => {
+    const response = await apiCall<UserStatisticsResponseApiResponse>('get', API_PATHS.userStatistics);
     return response.data;
 };

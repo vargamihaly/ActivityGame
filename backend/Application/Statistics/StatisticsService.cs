@@ -57,7 +57,7 @@ public class StatisticsService(ILogger<StatisticsService> logger, IUserService u
         var userGames = await dataProvider.GetGamesForUserAsync(userId);
 
         var gamesPlayed = userGames.Count;
-        var gamesWon = userGames.Count(g => g.Winner!.Id == userId);
+        var gamesWon = userGames.Count(g => g.Winner?.Id == userId);
         var gamesLost = gamesPlayed - gamesWon;
         var winRate = gamesPlayed > 0 ? (double)gamesWon / gamesPlayed * 100 : 0;
         double averageScore = gamesPlayed > 0 ? userGames.Average(g => g.Players.First(p => p.Id == userId).Score) : 0;

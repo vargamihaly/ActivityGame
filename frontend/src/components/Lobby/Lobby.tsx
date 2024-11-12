@@ -42,54 +42,62 @@ const Lobby: React.FC = () => {
             description: "The game settings have been updated.",
         });
     }, [refreshGameDetails, toast]);
+
+    const onPlayerJoinedLobby = useCallback(async () => {
+        await refreshGameDetails();
+        toast({
+            title: "New Player Joined",
+            description: "A new player has joined the lobby.",
+        });
+    }, [refreshGameDetails, toast]);
     
     const onPlayerLeftLobby = useCallback(
         async (leftPlayerId: string) => {
             await refreshGameDetails();
 
-        if (leftPlayerId === user?.id) {
+            if (leftPlayerId === user?.id) {
 
-            //If this user was the host, remove his host status
-            setHostStatus(false);
+                //If this user was the host, remove his host status
+                setHostStatus(false);
 
 
-            let isLastUserLeaving = currentGame?.players && currentGame.players.length === 0;
-            if (isLastUserLeaving) {
+                let isLastUserLeaving = currentGame?.players && currentGame.players.length === 0;
+                if (isLastUserLeaving) {
+                    // Handle game cancellation
+                    toast({
+                        title: "Game Cancelled",
+                        description: "The game has been cancelled as there are no players left.",
+                    });
+                } else {
+                    toast({
+                        title: "You left the game",
+                        description: "Redirected to the main page.",
+                    });
+                }
+
+                navigate('/');
+
+            } else {
+                // Another player left
+                toast({
+                    title: "Player Left",
+                    description: "A player has left the lobby.",
+                });
+            }
+
+            if (currentGame?.players && currentGame.players.length === 0) {
                 // Handle game cancellation
                 toast({
                     title: "Game Cancelled",
                     description: "The game has been cancelled as there are no players left.",
                 });
-            } else {
-                toast({
-                    title: "You left the game",
-                    description: "Redirected to the main page.",
-                });
+                navigate('/');
             }
-            
-            navigate('/');
-            
-        } else {
-            // Another player left
-            toast({
-                title: "Player Left",
-                description: "A player has left the lobby.",
-            });
-        }
-
-        if (currentGame?.players && currentGame.players.length === 0) {
-            // Handle game cancellation
-            toast({
-                title: "Game Cancelled",
-                description: "The game has been cancelled as there are no players left.",
-            });
-            navigate('/');
-        }
         },
         [refreshGameDetails, user?.id, setHostStatus, currentGame?.players, toast, navigate]
     );
 
-    const { isConnected, error } = useSSE(gameId, { onGameStarted, onPlayerLeftLobby, onGameSettingsUpdated });
+    const { isConnected, error } = useSSE(gameId, { onGameStarted, onPlayerJoinedLobby, onPlayerLeftLobby, onGameSettingsUpdated });
 
     useEffect(() => {
         if (error) {

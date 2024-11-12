@@ -1,5 +1,3 @@
-// src/components/Game/Game.tsx
-
 import React, {useCallback, useEffect, useState} from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
@@ -36,7 +34,6 @@ const Game: React.FC = () => {
         initialTime: currentGame?.timerInMinutes ? currentGame.timerInMinutes * 60 : 0,
         onTimeUp: () => {
             toast({ title: "Time's up!", description: 'The turn has ended.' });
-            // Optionally, automatically end the turn if desired
         },
     });
 
@@ -55,8 +52,8 @@ const Game: React.FC = () => {
         console.log('Turn ended, resetting timer and selected winner');
         resetTimer();
         setSelectedWinnerId('');
-        refreshGameDetails(); // This is memoized now
-    }, [resetTimer, setSelectedWinnerId, refreshGameDetails]);
+        refreshGameDetails();
+    }, [resetTimer, refreshGameDetails]);
 
     // Set up SSE to listen to server events
     const { isConnected, error: sseError } = useSSE(gameId, {
@@ -64,7 +61,7 @@ const Game: React.FC = () => {
         onTurnEnded,
         refreshGameDetails,
     });
-    
+
     // Fetch game details on component mount and when gameId changes
     useEffect(() => {
         if (gameId) {
@@ -86,7 +83,7 @@ const Game: React.FC = () => {
         if (!selectedWinnerId || !gameId) {
             toast({
                 title: 'Error',
-                description: 'Please select a winner and ensure game ID is available.',
+                description: 'Please select a winner before ending the turn.',
                 variant: 'destructive',
             });
             return;
@@ -98,7 +95,6 @@ const Game: React.FC = () => {
                 title: 'Success',
                 description: 'Turn ended successfully. New turn started!',
             });
-            // The turn has ended, reset selected winner and refresh game details
             setSelectedWinnerId('');
             refreshGameDetails();
         } catch (error) {
@@ -121,6 +117,10 @@ const Game: React.FC = () => {
 
     const currentRoundNumber = currentGame.currentRound?.roundNumber ?? 1;
     const isActivePlayer = user?.username === currentGame.currentRound?.activePlayerUsername;
+    console.log('currentGame:', currentGame);
+    console.log('isActivePlayer:', isActivePlayer);
+    console.log('userId:', user?.id);
+    console.log('activePlayerUsername:', currentGame.currentRound?.activePlayerUsername);
 
     return (
         <div className="container mx-auto p-4 max-w-6xl">
@@ -147,15 +147,20 @@ const Game: React.FC = () => {
                                 activePlayerUsername={currentGame.currentRound?.activePlayerUsername ?? ''}
                                 isActivePlayer={isActivePlayer}
                             />
-                            {isActivePlayer && (
-                                <WinnerSelection
-                                    players={currentGame.players!}
-                                    activePlayerUsername={currentGame.currentRound?.activePlayerUsername ?? ''}
-                                    selectedWinnerId={selectedWinnerId}
-                                    onWinnerSelect={setSelectedWinnerId}
-                                    onEndTurn={handleEndTurn}
-                                    isEndingTurn={endTurnMutation.isPending}
-                                />
+
+                            {/* Winner Selection section - Only shown when user is the active player */}
+                            {isActivePlayer && currentGame.players && currentGame.players.length > 0 && (
+                                <div className="mt-6 border-t pt-6">
+                                    <h3 className="text-lg font-semibold mb-4">Select Winner</h3>
+                                    <WinnerSelection
+                                        players={currentGame.players}
+                                        activePlayerUsername={currentGame.currentRound?.activePlayerUsername ?? ''}
+                                        selectedWinnerId={selectedWinnerId}
+                                        onWinnerSelect={setSelectedWinnerId}
+                                        onEndTurn={handleEndTurn}
+                                        isEndingTurn={endTurnMutation.isPending}
+                                    />
+                                </div>
                             )}
                         </CardContent>
                     </Card>
@@ -190,7 +195,7 @@ const Game: React.FC = () => {
                     </Card>
                     <Card>
                         <CardContent className="p-6">
-                            <Leaderboard players={currentGame.players!} currentUserId={user?.id ?? ''} />
+                            <Leaderboard players={currentGame.players ?? []} currentUserId={user?.id ?? ''} />
                         </CardContent>
                     </Card>
                 </div>

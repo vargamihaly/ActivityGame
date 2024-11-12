@@ -1,13 +1,14 @@
 // src/hooks/useSSE.ts
 
-import {useEffect, useState} from 'react';
+import { useEffect, useState } from 'react';
 
 interface UseSSEOptions {
     onGameStarted?: () => void;
     onGameEnded?: () => void;
     onTurnEnded?: () => void;
     onPlayerLeftLobby?: (leftPlayerId: string) => void;
-    onGameSettingsUpdated?: () => void; // Added property
+    onGameSettingsUpdated?: () => void;
+    onPlayerJoinedLobby?: () => void;  // Add this line
     refreshGameDetails?: () => Promise<void>;
 }
 
@@ -20,7 +21,8 @@ const useSSE = (
         onGameEnded,
         onTurnEnded,
         onPlayerLeftLobby,
-        onGameSettingsUpdated, // Destructure the new property
+        onGameSettingsUpdated,
+        onPlayerJoinedLobby,
         refreshGameDetails,
     } = options;
     const [isConnected, setIsConnected] = useState(false);
@@ -58,8 +60,11 @@ const useSSE = (
                     case 'GameStarted':
                         onGameStarted && onGameStarted();
                         break;
-                    case 'GameSettingsUpdated': // Handle the new event
+                    case 'GameSettingsUpdated':
                         onGameSettingsUpdated && onGameSettingsUpdated();
+                        break;
+                    case 'UserJoinedLobby':
+                        onPlayerJoinedLobby && onPlayerJoinedLobby();
                         break;
                     default:
                         refreshGameDetails && (await refreshGameDetails());
@@ -88,11 +93,13 @@ const useSSE = (
         onGameStarted,
         onGameEnded,
         onTurnEnded,
+        onPlayerLeftLobby,
         onGameSettingsUpdated,
-        refreshGameDetails, // Now this is memoized
+        onPlayerJoinedLobby, 
+        refreshGameDetails,
     ]);
 
-    return {isConnected, error};
+    return { isConnected, error };
 };
 
 export default useSSE;
