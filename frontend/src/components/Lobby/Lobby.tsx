@@ -11,6 +11,7 @@ import {Badge} from "@/components/ui/badge";
 import {Collapsible, CollapsibleContent, CollapsibleTrigger} from "@/components/ui/collapsible";
 import {Loader2, Settings, Star, LogOut} from 'lucide-react';
 import {useToast} from "@/hooks/use-toast";
+import {Copy} from 'lucide-react';
 import useSSE from '@/hooks/useSSE';
 import {components} from "@/api/activitygame-schema";
 
@@ -23,7 +24,7 @@ const Lobby: React.FC = () => {
     const {toast} = useToast();
     const startGameMutation = useStartGame();
     const leaveLobbyMutation = useLeaveLobby();
-    const {currentGame, refreshGameDetails} = useGame();
+    const {currentGame, setCurrentGame, setIsInGame, refreshGameDetails} = useGame();
     const navigate = useNavigate();
 
     const onGameStarted = useCallback(() => {
@@ -50,7 +51,7 @@ const Lobby: React.FC = () => {
             description: "A new player has joined the lobby.",
         });
     }, [refreshGameDetails, toast]);
-    
+
     const onPlayerLeftLobby = useCallback(
         async (leftPlayerId: string) => {
             await refreshGameDetails();
@@ -97,7 +98,12 @@ const Lobby: React.FC = () => {
         [refreshGameDetails, user?.id, setHostStatus, currentGame?.players, toast, navigate]
     );
 
-    const { isConnected, error } = useSSE(gameId, { onGameStarted, onPlayerJoinedLobby, onPlayerLeftLobby, onGameSettingsUpdated });
+    const {isConnected, error} = useSSE(gameId, {
+        onGameStarted,
+        onPlayerJoinedLobby,
+        onPlayerLeftLobby,
+        onGameSettingsUpdated
+    });
 
     useEffect(() => {
         if (error) {
@@ -141,11 +147,19 @@ const Lobby: React.FC = () => {
         if (!gameId) return;
 
         try {
+            // leave lobby
             await leaveLobbyMutation.mutateAsync(gameId);
             toast({
                 title: "Leaving game",
                 description: "Waiting for server confirmation...",
             });
+
+            // Clear game context
+            setCurrentGame(null);
+            setIsInGame(false);
+
+            // Finally navigate
+            navigate('/');
         } catch (error) {
             toast({
                 title: "Error",
@@ -190,13 +204,20 @@ const Lobby: React.FC = () => {
             <Card className="max-w-2xl mx-auto">
                 <CardHeader>
                     <CardTitle className="text-3xl font-bold text-center">Game Lobby</CardTitle>
-                    <Badge
-                        variant="secondary"
-                        className="mx-auto mt-2 cursor-pointer"
-                        onClick={onGameIdClicked}
-                    >
-                        Game ID: {gameId}
-                    </Badge>
+                    <div className="flex items-center justify-center gap-2 mt-2">
+                        <Badge variant="secondary" className="px-3 py-1">
+                            Game ID: {gameId}
+                        </Badge>
+                        <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={onGameIdClicked}
+                            className="h-8 w-8"
+                            title="Copy Game ID"
+                        >
+                            <Copy className="h-4 w-4"/>
+                        </Button>
+                    </div>
                     {!isConnected && (
                         <div className="text-yellow-500 text-center mt-2">
                             Connecting to game events...
@@ -257,15 +278,33 @@ const Lobby: React.FC = () => {
                             </CollapsibleContent>
                         </Collapsible>
 
-                        {isHost ? (
-                            <Button
-                                onClick={handleStartGame}
-                                className="w-full"
-                                disabled={startGameMutation.isPending || players.length < 2}
-                            >
-                                {startGameMutation.isPending ? 'Starting...' : 'Start Game'}
-                            </Button>
-                        ) : (
+                        {isHost && (
+                            <>
+                                <Button
+                                    onClick={handleStartGame}
+                                    className="w-full"
+                                    disabled={startGameMutation.isPending || players.length < 2}
+                                >
+                                    {startGameMutation.isPending ? 'Starting...' : 'Start Game'}
+                                </Button>
+                                <Button
+                                    onClick={handleLeaveLobby}
+                                    className="w-full mt-4"
+                                    disabled={leaveLobbyMutation.isPending}
+                                    variant="destructive"
+                                >
+                                    <LogOut className="mr-2 h-4 w-4"/>
+                                    {leaveLobbyMutation.isPending ? 'Leaving...' : 'Leave Lobby'}
+                                </Button>
+                                {players.length < 2 && (
+                                    <p className="text-sm text-red-500 mt-2">
+                                        At least 2 players are required to start the game.
+                                    </p>
+                                )}
+                            </>
+                        )}
+
+                        {!isHost && (
                             <Button
                                 onClick={handleLeaveLobby}
                                 className="w-full"
@@ -275,12 +314,6 @@ const Lobby: React.FC = () => {
                                 <LogOut className="mr-2 h-4 w-4"/>
                                 {leaveLobbyMutation.isPending ? 'Leaving...' : 'Leave Lobby'}
                             </Button>
-                        )}
-
-                        {isHost && players.length < 2 && (
-                            <p className="text-sm text-red-500 mt-2">
-                                At least 2 players are required to start the game.
-                            </p>
                         )}
                     </div>
                 </CardContent>

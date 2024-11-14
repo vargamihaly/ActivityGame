@@ -12,9 +12,11 @@ import {
     postCreateGameAsync,
     postEndTurnAsync,
     postStartGameAsync,
-    putGameSettingsAsync,
     postJoinGameAsync,
-    postLeaveLobbyAsync, getUserStatisticsAsync, getGlobalStatisticsAsync
+    postLeaveLobbyAsync,
+    getUserStatisticsAsync,
+    getGlobalStatisticsAsync,
+    postTimeUpAsync, updateGameSettingsAsync
 } from "@/api/games-api";
 import {useGame} from "@/context/GameContext";
 
@@ -70,7 +72,7 @@ export const useUpdateSettings = () => {
     const {toast} = useToast();
 
     return useMutation<ApiResponse, AxiosError<ApiResponse>, { gameId: string; request: UpdateGameSettingsRequest }>({
-        mutationFn: async ({gameId, request}) => putGameSettingsAsync(gameId, request),
+        mutationFn: async ({gameId, request}) => updateGameSettingsAsync(gameId, request),
         onSuccess: async (_, {gameId}) => {
             await queryClient.invalidateQueries({
                 queryKey: ['games', gameId]
@@ -320,5 +322,29 @@ export const useUserStatistics = (options = {}) => {
             return response.data;
         },
         ...options,
+    });
+};
+
+export const useTimeUp = () => {
+    const queryClient = useQueryClient();
+    const {toast} = useToast();
+
+    return useMutation<ApiResponse, AxiosError<ApiResponse>, string>({
+        mutationFn: postTimeUpAsync,
+        onSuccess: async (_, gameId) => {
+            await queryClient.invalidateQueries({
+                queryKey: ['games', gameId]
+            });
+            console.log('Time up handled successfully');
+        },
+        onError: (error) => {
+            const errorMessage = error.response?.data?.message || error.message || "An unexpected error occurred while handling time up.";
+            toast({
+                title: errorMessageTitle,
+                description: errorMessage,
+                variant: "destructive"
+            });
+            throw error;
+        }
     });
 };

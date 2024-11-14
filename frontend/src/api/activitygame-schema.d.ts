@@ -248,7 +248,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Games/current": {
+    "/api/games/current": {
         parameters: {
             query?: never;
             header?: never;
@@ -269,7 +269,18 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["GameResponseApiResponse"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponse"];
+                    };
                 };
             };
         };
@@ -281,7 +292,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Games/details/{gameId}": {
+    "/api/games/{gameId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -327,7 +338,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Games/create": {
+    "/api/games": {
         parameters: {
             query?: never;
             header?: never;
@@ -351,9 +362,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": components["schemas"]["CreateGameResponseApiResponse"];
                         "application/json": components["schemas"]["CreateGameResponseApiResponse"];
-                        "text/json": components["schemas"]["CreateGameResponseApiResponse"];
                     };
                 };
                 /** @description Bad Request */
@@ -362,9 +371,16 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": components["schemas"]["ApiResponse"];
                         "application/json": components["schemas"]["ApiResponse"];
-                        "text/json": components["schemas"]["ApiResponse"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponse"];
                     };
                 };
             };
@@ -375,7 +391,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Games/join/{gameId}": {
+    "/api/games/{gameId}/join": {
         parameters: {
             query?: never;
             header?: never;
@@ -401,9 +417,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": components["schemas"]["ApiResponse"];
                         "application/json": components["schemas"]["ApiResponse"];
-                        "text/json": components["schemas"]["ApiResponse"];
                     };
                 };
                 /** @description Bad Request */
@@ -412,9 +426,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": components["schemas"]["ApiResponse"];
                         "application/json": components["schemas"]["ApiResponse"];
-                        "text/json": components["schemas"]["ApiResponse"];
                     };
                 };
             };
@@ -425,7 +437,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Games/start/{gameId}": {
+    "/api/games/{gameId}/start": {
         parameters: {
             query?: never;
             header?: never;
@@ -471,7 +483,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Games/end-turn/{gameId}": {
+    "/api/games/{gameId}/turns/end": {
         parameters: {
             query?: never;
             header?: never;
@@ -492,6 +504,8 @@ export interface paths {
             requestBody?: {
                 content: {
                     "application/json": components["schemas"]["EndTurnRequest"];
+                    "text/json": components["schemas"]["EndTurnRequest"];
+                    "application/*+json": components["schemas"]["EndTurnRequest"];
                 };
             };
             responses: {
@@ -501,9 +515,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": components["schemas"]["EndTurnResponseApiResponse"];
                         "application/json": components["schemas"]["EndTurnResponseApiResponse"];
-                        "text/json": components["schemas"]["EndTurnResponseApiResponse"];
                     };
                 };
                 /** @description Bad Request */
@@ -512,9 +524,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": components["schemas"]["ApiResponse"];
                         "application/json": components["schemas"]["ApiResponse"];
-                        "text/json": components["schemas"]["ApiResponse"];
                     };
                 };
             };
@@ -525,7 +535,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Games/leave-lobby/{gameId}": {
+    "/api/games/{gameId}/lobby/leave": {
         parameters: {
             query?: never;
             header?: never;
@@ -551,9 +561,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": components["schemas"]["ApiResponse"];
                         "application/json": components["schemas"]["ApiResponse"];
-                        "text/json": components["schemas"]["ApiResponse"];
                     };
                 };
                 /** @description Bad Request */
@@ -562,9 +570,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": components["schemas"]["ApiResponse"];
                         "application/json": components["schemas"]["ApiResponse"];
-                        "text/json": components["schemas"]["ApiResponse"];
                     };
                 };
             };
@@ -575,7 +581,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Games/leave/{gameId}": {
+    "/api/games/{gameId}/leave": {
         parameters: {
             query?: never;
             header?: never;
@@ -600,7 +606,18 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiResponse"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponse"];
+                    };
                 };
             };
         };
@@ -610,7 +627,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Games/settings/{gameId}": {
+    "/api/games/{gameId}/settings": {
         parameters: {
             query?: never;
             header?: never;
@@ -618,7 +635,12 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put: {
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: {
             parameters: {
                 query?: never;
                 header?: never;
@@ -630,6 +652,8 @@ export interface paths {
             requestBody?: {
                 content: {
                     "application/json": components["schemas"]["UpdateGameSettingsRequest"];
+                    "text/json": components["schemas"]["UpdateGameSettingsRequest"];
+                    "application/*+json": components["schemas"]["UpdateGameSettingsRequest"];
                 };
             };
             responses: {
@@ -639,9 +663,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": components["schemas"]["ApiResponse"];
                         "application/json": components["schemas"]["ApiResponse"];
-                        "text/json": components["schemas"]["ApiResponse"];
                     };
                 };
                 /** @description Bad Request */
@@ -650,14 +672,53 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": components["schemas"]["ApiResponse"];
                         "application/json": components["schemas"]["ApiResponse"];
-                        "text/json": components["schemas"]["ApiResponse"];
                     };
                 };
             };
         };
-        post?: never;
+        trace?: never;
+    };
+    "/api/games/{gameId}/time-up": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    gameId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponse"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -805,7 +866,7 @@ export interface components {
             data?: components["schemas"]["GameResponse"];
         };
         /** @enum {string} */
-        GameStatus: "Waiting" | "InProgress" | "Finished";
+        GameStatus: "Waiting" | "InProgress" | "Finished" | "TimeUp";
         GetGlobalStatisticsResponse: {
             /** Format: double */
             averageScore?: number;

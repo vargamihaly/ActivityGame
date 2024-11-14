@@ -34,25 +34,19 @@ export const setAuthToken = (token: string | null) => {
     authToken = token;
 };
 
+
 const API_PATHS = {
     register: '/Auth/register',
     me: '/Auth/me',
     logout: '/Auth/logout',
     username: '/Auth/username',
     gameEvents: '/GameEvents',
-    gameDetails: '/games/details',
-    currentGame: '/games/current',
-    createGame: '/games/create',
-    joinGame: '/games/join',
-    startGame: '/games/start',
-    endTurn: '/games/end-turn',
-    gameSettings: '/games/settings',
-    leaveLobby: 'games/leave-lobby',
+    games: '/games',
     globalStatistics: '/statistics/statistics/global',
     userStatistics: '/statistics/statistics/user',
 } as const;
 
-const apiCall = async <T>(method: 'get' | 'post' | 'put', url: string, data?: any): Promise<AxiosResponse<T>> => {
+const apiCall = async <T>(method: 'get' | 'post' | 'put' | 'patch', url: string, data?: any): Promise<AxiosResponse<T>> => {
     const config: AxiosRequestConfig = { method, url };
     if (data) {
         config.data = data;
@@ -96,43 +90,47 @@ export const connectToGameEventStreamAsync = async (gameId: string): Promise<Eve
 
 // Game endpoints
 export const getGameDetailsAsync = async (gameId: string): Promise<GetGameResponseApiResponse> => {
-    const response = await apiCall<GetGameResponseApiResponse>('get', `${API_PATHS.gameDetails}/${gameId}`);
+    const response = await apiCall<GetGameResponseApiResponse>('get', `${API_PATHS.games}/${gameId}`);
     return response.data;
 };
 
 export const getCurrentGameAsync = async (): Promise<GetGameResponseApiResponse> => {
-    const response = await apiCall<GetGameResponseApiResponse>('get', `${API_PATHS.currentGame}`);
+    const response = await apiCall<GetGameResponseApiResponse>('get', `${API_PATHS.games}/current`);
     return response.data;
 };
 
 export const postCreateGameAsync = async (): Promise<CreateGameResponseApiResponse> => {
-    const response = await apiCall<CreateGameResponseApiResponse>('post', API_PATHS.createGame);
+    const response = await apiCall<CreateGameResponseApiResponse>('post', API_PATHS.games);
     return response.data;
 };
 
 export const postJoinGameAsync = async (gameId: string): Promise<ApiResponse> => {
-    const response = await apiCall<ApiResponse>('post', `${API_PATHS.joinGame}/${gameId}`);
+    const response = await apiCall<ApiResponse>('post', `${API_PATHS.games}/${gameId}/join`);
     return response.data;
 };
 
 export const postStartGameAsync = async (gameId: string): Promise<StartGameResponseApiResponse> => {
-    const response = await apiCall<StartGameResponseApiResponse>('post', `${API_PATHS.startGame}/${gameId}`);
+    const response = await apiCall<StartGameResponseApiResponse>('post', `${API_PATHS.games}/${gameId}/start`);
     return response.data;
 };
 
-//postLeaveLobby
 export const postLeaveLobbyAsync = async (gameId: string): Promise<ApiResponse> => {
-    const response = await apiCall<ApiResponse>('post', `${API_PATHS.leaveLobby}/${gameId}`);
+    const response = await apiCall<ApiResponse>('post', `${API_PATHS.games}/${gameId}/lobby/leave`);
+    return response.data;
+};
+
+export const postLeaveGameAsync = async (gameId: string): Promise<ApiResponse> => {
+    const response = await apiCall<ApiResponse>('post', `${API_PATHS.games}/${gameId}/leave`);
     return response.data;
 };
 
 export const postEndTurnAsync = async (gameId: string, request: EndTurnRequest): Promise<EndTurnResponseApiResponse> => {
-    const response = await apiCall<EndTurnResponseApiResponse>('post', `${API_PATHS.endTurn}/${gameId}`, request);
+    const response = await apiCall<EndTurnResponseApiResponse>('post', `${API_PATHS.games}/${gameId}/turns/end`, request);
     return response.data;
 };
 
-export const putGameSettingsAsync = async (gameId: string, request: UpdateGameSettingsRequest): Promise<ApiResponse> => {
-    const response = await apiCall<ApiResponse>('put', `${API_PATHS.gameSettings}/${gameId}`, request);
+export const updateGameSettingsAsync = async (gameId: string, request: UpdateGameSettingsRequest): Promise<ApiResponse> => {
+    const response = await apiCall<ApiResponse>('patch', `${API_PATHS.games}/${gameId}/settings`, request);
     return response.data;
 };
 
@@ -143,5 +141,10 @@ export const getGlobalStatisticsAsync = async (): Promise<GlobalStatisticsRespon
 
 export const getUserStatisticsAsync = async (): Promise<UserStatisticsResponseApiResponse> => {
     const response = await apiCall<UserStatisticsResponseApiResponse>('get', API_PATHS.userStatistics);
+    return response.data;
+};
+
+export const postTimeUpAsync = async (gameId: string): Promise<ApiResponse> => {
+    const response = await apiCall<ApiResponse>('post', `${API_PATHS.games}/${gameId}/time-up`);
     return response.data;
 };

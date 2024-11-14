@@ -156,14 +156,24 @@ paths:
       responses:
         '200':
           description: OK
-  /api/Games/current:
+  /api/games/current:
     get:
       tags:
         - Games
       responses:
         '200':
           description: OK
-  '/api/Games/details/{gameId}':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GameResponseApiResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+  '/api/games/{gameId}':
     get:
       tags:
         - Games
@@ -187,7 +197,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-  /api/Games/create:
+  /api/games:
     post:
       tags:
         - Games
@@ -195,28 +205,22 @@ paths:
         '200':
           description: OK
           content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/CreateGameResponseApiResponse'
             application/json:
-              schema:
-                $ref: '#/components/schemas/CreateGameResponseApiResponse'
-            text/json:
               schema:
                 $ref: '#/components/schemas/CreateGameResponseApiResponse'
         '400':
           description: Bad Request
           content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-            text/json:
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-  '/api/Games/join/{gameId}':
+  '/api/games/{gameId}/join':
     post:
       tags:
         - Games
@@ -231,28 +235,16 @@ paths:
         '200':
           description: OK
           content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
             application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
-            text/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         '400':
           description: Bad Request
           content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-            text/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
-  '/api/Games/start/{gameId}':
+  '/api/games/{gameId}/start':
     post:
       tags:
         - Games
@@ -276,7 +268,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-  '/api/Games/end-turn/{gameId}':
+  '/api/games/{gameId}/turns/end':
     post:
       tags:
         - Games
@@ -292,32 +284,26 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/EndTurnRequest'
+          text/json:
+            schema:
+              $ref: '#/components/schemas/EndTurnRequest'
+          application/*+json:
+            schema:
+              $ref: '#/components/schemas/EndTurnRequest'
       responses:
         '200':
           description: OK
           content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/EndTurnResponseApiResponse'
             application/json:
-              schema:
-                $ref: '#/components/schemas/EndTurnResponseApiResponse'
-            text/json:
               schema:
                 $ref: '#/components/schemas/EndTurnResponseApiResponse'
         '400':
           description: Bad Request
           content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-            text/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
-  '/api/Games/leave-lobby/{gameId}':
+  '/api/games/{gameId}/lobby/leave':
     post:
       tags:
         - Games
@@ -332,28 +318,16 @@ paths:
         '200':
           description: OK
           content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
             application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
-            text/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         '400':
           description: Bad Request
           content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-            text/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
-  '/api/Games/leave/{gameId}':
+  '/api/games/{gameId}/leave':
     post:
       tags:
         - Games
@@ -367,8 +341,18 @@ paths:
       responses:
         '200':
           description: OK
-  '/api/Games/settings/{gameId}':
-    put:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+  '/api/games/{gameId}/settings':
+    patch:
       tags:
         - Games
       parameters:
@@ -383,29 +367,47 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/UpdateGameSettingsRequest'
+          text/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGameSettingsRequest'
+          application/*+json:
+            schema:
+              $ref: '#/components/schemas/UpdateGameSettingsRequest'
       responses:
         '200':
           description: OK
           content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
             application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
-            text/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         '400':
           description: Bad Request
           content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-            text/json:
+  '/api/games/{gameId}/time-up':
+    post:
+      tags:
+        - Games
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
   /api/Statistics/statistics/global:
@@ -572,6 +574,7 @@ components:
         - Waiting
         - InProgress
         - Finished
+        - TimeUp
       type: string
     GetGlobalStatisticsResponse:
       type: object

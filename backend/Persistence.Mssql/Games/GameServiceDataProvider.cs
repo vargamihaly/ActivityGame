@@ -78,7 +78,7 @@ public class GameServiceDataProvider(ApplicationDbContext context, IMapper mappe
         if (update.EnabledMethods != null)
             gameEntity.EnabledMethods = update.EnabledMethods.ToList();
 
-        await context.SaveChangesAsync().ConfigureAwait(false);
+        await context.SaveChangesAsync();
     }
 
     public async Task RemoveGameAsync(Guid gameId)

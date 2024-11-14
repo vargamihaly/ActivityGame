@@ -1,5 +1,3 @@
-// src/hooks/useSSE.ts
-
 import { useEffect, useState } from 'react';
 
 interface UseSSEOptions {
@@ -8,7 +6,7 @@ interface UseSSEOptions {
     onTurnEnded?: () => void;
     onPlayerLeftLobby?: (leftPlayerId: string) => void;
     onGameSettingsUpdated?: () => void;
-    onPlayerJoinedLobby?: () => void;  // Add this line
+    onPlayerJoinedLobby?: () => void;
     refreshGameDetails?: () => Promise<void>;
 }
 
@@ -95,7 +93,7 @@ const useSSE = (
         onTurnEnded,
         onPlayerLeftLobby,
         onGameSettingsUpdated,
-        onPlayerJoinedLobby, 
+        onPlayerJoinedLobby,
         refreshGameDetails,
     ]);
 

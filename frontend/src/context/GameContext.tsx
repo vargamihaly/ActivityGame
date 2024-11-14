@@ -13,6 +13,7 @@ interface GameContextType {
     isInGame: boolean;
     setIsInGame: React.Dispatch<React.SetStateAction<boolean>>;
     refreshGameDetails: () => Promise<void>;
+    clearGameState: () => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -44,13 +45,17 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, [setCurrentGame, setIsInGame]);
 
+    const clearGameState = useCallback(() => {
+        setCurrentGame(null);
+        setIsInGame(false);
+    }, []);
+
     useEffect(() => {
         refreshGameDetails();
-        // Optionally, set up an interval to refresh game details periodically
     }, [refreshGameDetails]);
 
     return (
-        <GameContext.Provider value={{ currentGame, setCurrentGame, isInGame, setIsInGame, refreshGameDetails }}>
+        <GameContext.Provider value={{ currentGame, setCurrentGame, isInGame, setIsInGame, refreshGameDetails, clearGameState}}>
             {children}
         </GameContext.Provider>
     );

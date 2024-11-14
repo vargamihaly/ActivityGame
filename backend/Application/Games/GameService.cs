@@ -15,6 +15,7 @@ public interface IGameService : IScoped
     Task<bool> EndTurnAsync(Guid gameId, string actingPlayerId, string guessingPlayerId);
     Task<Game?> GetActiveGameForPlayerAsync(string userId);
     Task<bool> LeaveGameAsync(Guid gameId, string userId);
+    Task HandleTimeUpAsync(Guid gameId);
 }
 
 public class GameService(
@@ -91,12 +92,20 @@ public class GameService(
         }
 
         logger.LogInformation("Removing player {UserId} from game {GameId}...", userId, gameId);
-        await dataProvider.RemovePlayerFromGameAsync(game.Id, user.Id);
+        try
+        {
+            await dataProvider.RemovePlayerFromGameAsync(game.Id, user.Id);
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+            throw;
+        }
 
         if ((bool)user.IsHost)
         {
             logger.LogInformation("User {UserId} is the host of game {GameId}. Reassigning host...", userId, gameId);
-            await dataProvider.UpdateGameAsync(game.Id, GameUpdate.WithHost(user.Id));
+            // await dataProvider.UpdateGameAsync(game.Id, GameUpdate.WithHost(user.Id));
 
 
             var nextHost = game.Players.FirstOrDefault(p => p.Id != user.Id);
@@ -175,7 +184,7 @@ public class GameService(
         await dataProvider.IncrementPlayerScoreAsync(gameId, guessingPlayerId);
 
         game.Players.First(x => x.Id == guessingPlayerId).Score++;
-        
+
         logger.LogInformation("Round winner set for game {GameId}. Winner: {WinnerId}", gameId, guessingPlayerId);
 
         if (game.Players.Any(player => player.Score >= game.MaxScore))
@@ -186,6 +195,17 @@ public class GameService(
 
         await StartNextRoundAsync(game, round);
         return false;
+    }
+
+    public async Task HandleTimeUpAsync(Guid gameId)
+    {
+        var game = await GetGameDetailsAsync(gameId);
+        gameValidator.ValidateGameState(game, GameStatus.InProgress);
+
+        var round = game.Rounds?.LastOrDefault()
+            ?? throw new InvalidOperationException("No active round found for the game.");
+
+        await StartNextRoundAsync(game, round);
     }
 
     private static MethodType GetNextMethodType(Game game)
@@ -260,9 +280,9 @@ public class GameService(
     public async Task<bool> LeaveGameAsync(Guid gameId, string userId)
     {
         var isGameOver = false;
-        
+
         var game = await dataProvider.GetGameDetailsAsync(gameId) ?? throw new GameNotFoundException(gameId);
-        
+
         if (game.Players.Count() <= 2 && game.Status == GameStatus.InProgress)
         {
             await dataProvider.UpdateGameAsync(gameId, GameUpdate.WithStatus(GameStatus.Finished));

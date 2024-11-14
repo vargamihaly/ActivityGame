@@ -2,7 +2,7 @@ import React, {useCallback, useEffect, useState} from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useGame } from '@/context/GameContext';
-import { useEndTurn, useGameDetails } from '@/hooks/gameHooks';
+import {useEndTurn, useGameDetails, useTimeUp} from '@/hooks/gameHooks';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2, MessageCircle } from 'lucide-react';
@@ -21,6 +21,7 @@ const Game: React.FC = () => {
     const { currentGame, setCurrentGame, setIsInGame } = useGame();
     const { toast } = useToast();
     const endTurnMutation = useEndTurn();
+    const timeUpMutation = useTimeUp();
     const { data: gameDetails, refetch: reFetchGameDetails } = useGameDetails(gameId);
     const [selectedWinnerId, setSelectedWinnerId] = useState<string>('');
 
@@ -32,10 +33,37 @@ const Game: React.FC = () => {
     // Initialize the game timer
     const { timeLeft, progress, startTimer, resetTimer } = useGameTimer({
         initialTime: currentGame?.timerInMinutes ? currentGame.timerInMinutes * 60 : 0,
-        onTimeUp: () => {
-            toast({ title: "Time's up!", description: 'The turn has ended.' });
+        onTimeUp: async () => {
+            if (isActivePlayer) {
+                try {
+                    await handleTimeUp();
+                    toast({
+                        title: "Time's up!",
+                        description: 'Starting next round...'
+                    });
+                } catch (error) {
+                    console.error('Error handling time up:', error);
+                    toast({
+                        title: 'Error',
+                        description: 'Failed to handle time up',
+                        variant: 'destructive'
+                    });
+                }
+            }
         },
     });
+
+    const handleTimeUp = async () => {
+        if (!gameId) return;
+
+        try {
+            await timeUpMutation.mutateAsync(gameId);
+            await refreshGameDetails();
+        } catch (error) {
+            console.error('Error handling time up:', error);
+            throw error;
+        }
+    };
 
     // Event handler when the game ends
     const onGameEnded = useCallback(() => {
@@ -149,17 +177,25 @@ const Game: React.FC = () => {
                             />
 
                             {/* Winner Selection section - Only shown when user is the active player */}
-                            {isActivePlayer && currentGame.players && currentGame.players.length > 0 && (
+                            {isActivePlayer && (
                                 <div className="mt-6 border-t pt-6">
-                                    <h3 className="text-lg font-semibold mb-4">Select Winner</h3>
-                                    <WinnerSelection
-                                        players={currentGame.players}
-                                        activePlayerUsername={currentGame.currentRound?.activePlayerUsername ?? ''}
-                                        selectedWinnerId={selectedWinnerId}
-                                        onWinnerSelect={setSelectedWinnerId}
-                                        onEndTurn={handleEndTurn}
-                                        isEndingTurn={endTurnMutation.isPending}
-                                    />
+                                    {timeLeft > 0 ? (
+                                        <WinnerSelection
+                                            players={currentGame.players!}
+                                            activePlayerUsername={currentGame.currentRound?.activePlayerUsername ?? ''}
+                                            selectedWinnerId={selectedWinnerId}
+                                            onWinnerSelect={setSelectedWinnerId}
+                                            onEndTurn={handleEndTurn}
+                                            isEndingTurn={endTurnMutation.isPending}
+                                        />
+                                    ) : (
+                                        <Button
+                                            onClick={handleTimeUp}
+                                            className="w-full"
+                                        >
+                                            Start Next Round
+                                        </Button>
+                                    )}
                                 </div>
                             )}
                         </CardContent>
