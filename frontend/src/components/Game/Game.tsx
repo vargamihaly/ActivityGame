@@ -13,6 +13,7 @@ import CurrentRound from './CurrentRound';
 import WinnerSelection from './WinnerSelection';
 import TimerDisplay from './TimerDisplay';
 import Leaderboard from './Leaderboard';
+import ChatBox from './ChatBox';
 
 const Game: React.FC = () => {
     const { gameId } = useParams<{ gameId: string }>();
@@ -30,6 +31,9 @@ const Game: React.FC = () => {
         await reFetchGameDetails();
     }, [reFetchGameDetails]);
 
+    // const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+    
+    
     // Initialize the game timer
     const { timeLeft, progress, startTimer, resetTimer } = useGameTimer({
         initialTime: currentGame?.timerInMinutes ? currentGame.timerInMinutes * 60 : 0,

@@ -1,6 +1,8 @@
 ﻿// File: Services/GameEventService.cs
 
+using ActivityGameBackend.Application.Chat;
 using ActivityGameBackend.Common.Core;
+using Newtonsoft.Json;
 using System.Collections.Concurrent;
 
 public interface IGameEventService : ISingleton

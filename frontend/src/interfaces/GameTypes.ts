@@ -6,7 +6,8 @@ type MethodType = components["schemas"]["MethodType"];
 export const GAME_STATUS: Record<GameStatus, GameStatus> = {
     Waiting: "Waiting",
     InProgress: "InProgress",
-    Finished: "Finished"
+    Finished: "Finished",
+    TimeUp: "TimeUp",
 };
 
 export const METHOD_TYPE: Record<MethodType, MethodType> = {

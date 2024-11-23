@@ -213,6 +213,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/games/{gameId}/chat/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    gameId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ChatMessageResponseListApiResponse"];
+                        "application/json": components["schemas"]["ChatMessageResponseListApiResponse"];
+                        "text/json": components["schemas"]["ChatMessageResponseListApiResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    gameId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["SendMessageRequest"];
+                    "text/json": components["schemas"]["SendMessageRequest"];
+                    "application/*+json": components["schemas"]["SendMessageRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ChatMessageResponseApiResponse"];
+                        "application/json": components["schemas"]["ChatMessageResponseApiResponse"];
+                        "text/json": components["schemas"]["ChatMessageResponseApiResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ApiResponse"];
+                        "application/json": components["schemas"]["ApiResponse"];
+                        "text/json": components["schemas"]["ApiResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/GameEvents/{gameId}": {
         parameters: {
             query?: never;
@@ -822,6 +901,28 @@ export interface components {
             message?: string | null;
             errorCode?: components["schemas"]["ErrorCode"];
         };
+        ChatMessageResponse: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            gameId?: string;
+            senderId?: string | null;
+            content?: string | null;
+            /** Format: date-time */
+            timestamp?: string;
+        };
+        ChatMessageResponseApiResponse: {
+            success?: boolean;
+            message?: string | null;
+            errorCode?: components["schemas"]["ErrorCode"];
+            data?: components["schemas"]["ChatMessageResponse"];
+        };
+        ChatMessageResponseListApiResponse: {
+            success?: boolean;
+            message?: string | null;
+            errorCode?: components["schemas"]["ErrorCode"];
+            data?: components["schemas"]["ChatMessageResponse"][] | null;
+        };
         CreateGameResponse: {
             /** Format: uuid */
             gameId?: string;
@@ -921,6 +1022,9 @@ export interface components {
             methodType: components["schemas"]["MethodType"];
             word: string | null;
             activePlayerUsername: string | null;
+        };
+        SendMessageRequest: {
+            message: string | null;
         };
         SetUsernameRequest: {
             username: string | null;

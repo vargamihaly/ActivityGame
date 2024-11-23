@@ -1,6 +1,6 @@
 ﻿// File: Controllers/GameEventsController.cs
 
-namespace ActivityGameBackend.Web.Controllers.SignalR
+namespace ActivityGameBackend.Web.Controllers.Sse
 {
     [ApiController]
     [Route("api/[controller]")]

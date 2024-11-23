@@ -1,4 +1,5 @@
-﻿using ActivityGameBackend.Persistence.Mssql.Games;
+﻿using ActivityGameBackend.Persistence.Mssql.Chat;
+using ActivityGameBackend.Persistence.Mssql.Games;
 using Microsoft.EntityFrameworkCore;
 
 namespace ActivityGameBackend.Persistence.Mssql;
@@ -10,12 +11,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<RoundEntity> Rounds { get; set; }
     public DbSet<WordEntity> Words { get; set; }
     public DbSet<GamePlayerEntity> GamePlayers { get; set; }
-
+    public DbSet<ChatMessageEntity> ChatMessages { get; set; }
+    
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
-
-        // Apply all configurations in the assembly
+        
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
     }
 }

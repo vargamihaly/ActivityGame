@@ -1,0 +1,2959 @@
+// File: Application\GlobalUsings.cs
+--------------------------------------------------------------------------------
+global using ActivityGameBackend.Application.Users;
+global using ActivityGameBackend.Common.Core;
+
+// File: Application\Exceptions\AppException.cs
+--------------------------------------------------------------------------------
+using System.Net;
+using System.Text.Json.Serialization;
+using ActivityGameBackend.Application.Games;
+
+namespace ActivityGameBackend.Application.Exceptions;
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum ErrorCode
+{
+    GameNotFound = 1001,
+
+    PlayerAlreadyInGame = 1002,
+
+    InvalidGameState = 1003,
+
+    HostValidationFailed = 1004,
+
+    InvalidGameSettings = 1005,
+
+    InvalidPlayerCount = 1006,
+
+    UserNotFound = 1007,
+    UserNotAuthenticated = 1008,
+
+}
+
+public class AppException : Exception
+{
+    public HttpStatusCode StatusCode { get; }
+    public ErrorCode ErrorCode { get; }
+
+    public AppException(string message, ErrorCode errorCode, HttpStatusCode statusCode = HttpStatusCode.BadRequest)
+        : base(message)
+    {
+        ErrorCode = errorCode;
+        StatusCode = statusCode;
+    }
+}
+
+public class GameNotFoundException(Guid gameId) : AppException($"Game with ID {gameId} not found", ErrorCode.GameNotFound, HttpStatusCode.NotAcceptable);
+public class PlayerAlreadyInGameException(string userId,
+                                          Guid gameId) : AppException($"Player {userId} is already in an active game {gameId}", ErrorCode.PlayerAlreadyInGame, HttpStatusCode.Conflict);
+public class InvalidGameStateException(GameStatus expectedStatus) : AppException($"Invalid game state. Expected: {expectedStatus}", ErrorCode.InvalidGameState, HttpStatusCode.BadRequest);
+
+public class InvalidGameSettingsException(string setting, int minValue) : AppException($"Invalid game settings. {setting} must be greater than {minValue}", ErrorCode.InvalidGameSettings, HttpStatusCode.UnprocessableEntity);
+
+public class InvalidPlayerCountException() : AppException("The game must have at least two player.", ErrorCode.InvalidPlayerCount);
+
+public class UserNotFoundException(string userId) : AppException($"User with ID {userId} not found", ErrorCode.UserNotFound, HttpStatusCode.NotFound);
+
+
+// File: Application\Games\Game.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Application.Games;
+public sealed record Game
+{
+    public required Guid Id { get; init; }
+    public required User Host { get; init; }
+    public required int TimerInMinutes { get; set; }
+    public required int MaxScore { get; set; }
+    public required IEnumerable<User> Players { get; init; } = [];
+    public required IEnumerable<Round>? Rounds { get; set; } = [];
+    public required GameStatus Status { get; init; }
+    public required IEnumerable<MethodType> EnabledMethods { get; set; } = new List<MethodType>();
+    public User? Winner { get; set; }
+}
+
+
+// File: Application\Games\GameService.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Exceptions;
+using ActivityGameBackend.Application.Games.Validation;
+using Microsoft.Extensions.Logging;
+
+namespace ActivityGameBackend.Application.Games;
+
+public interface IGameService : IScoped
+{
+    Task<Game> GetGameDetailsAsync(Guid id);
+    Task<Guid> CreateGameAsync(string userId);
+    Task AddPlayerToGameAsync(Guid gameId, string userId);
+    Task UpdateGameSettingsAsync(Guid gameId, int timerInMinutes, int maxScore, IEnumerable<MethodType> enabledMethods);
+    Task RemovePlayerFromLobbyAsync(Guid gameId, string userId);
+    Task<(User nextActivePlayer, Word nextWord)> StartGameAsync(Guid gameId, string currentUserId);
+    Task<bool> EndTurnAsync(Guid gameId, string actingPlayerId, string guessingPlayerId);
+    Task<Game?> GetActiveGameForPlayerAsync(string userId);
+    Task<bool> LeaveGameAsync(Guid gameId, string userId);
+    Task HandleTimeUpAsync(Guid gameId);
+}
+
+public class GameService(
+    ILogger<GameService> logger,
+    IGameValidator gameValidator,
+    IUserService userService,
+    IGameServiceDataProvider dataProvider) : IGameService
+{
+    public async Task<Guid> CreateGameAsync(string userId)
+    {
+        logger.LogInformation("Attempting to create new game for user {UserId}", userId);
+
+        var activeGame = await dataProvider.GetActiveGameForPlayerAsync(userId);
+        if (activeGame != null && activeGame.Status == GameStatus.InProgress)
+        {
+            logger.LogWarning("User {UserId} attempted to create a game while already in an active game {GameId}", userId, activeGame.Id);
+            throw new PlayerAlreadyInGameException(userId, activeGame.Id);
+        }
+
+        var player = await userService.GetUserByIdAsync(userId) ?? throw new UserNotFoundException(userId);
+
+        var createdGame = await dataProvider.CreateGameAsync(player.Id);
+        await dataProvider.UpdateGameAsync(createdGame.Id, GameUpdate.WithHost(player.Id));
+
+        logger.LogInformation("Game {GameId} created successfully for user {UserId}", createdGame.Id, userId);
+        return createdGame.Id;
+    }
+
+    public async Task<Game> GetGameDetailsAsync(Guid id)
+    {
+        logger.LogInformation("Fetching game details for game {GameId}", id);
+        var game = await dataProvider.GetGameDetailsAsync(id)
+            ?? throw new GameNotFoundException(id);
+        logger.LogInformation("Game details retrieved successfully for game {GameId}", id);
+        return game;
+    }
+
+    public async Task AddPlayerToGameAsync(Guid gameId, string userId)
+    {
+        logger.LogInformation("Adding player {UserId} to game {GameId}", userId, gameId);
+
+        var activeGame = await dataProvider.GetActiveGameForPlayerAsync(userId);
+        if (activeGame != null && activeGame.Status == GameStatus.InProgress)
+        {
+            logger.LogWarning("User {UserId} attempted to join a game while already in an active game {GameId}", userId, activeGame.Id);
+            throw new PlayerAlreadyInGameException(userId, activeGame.Id);
+        }
+
+        var game = await GetGameDetailsAsync(gameId);
+
+        gameValidator.ValidateGameState(game, GameStatus.Waiting);
+
+        var user = await userService.GetUserByIdAsync(userId)
+            ?? throw new UserNotFoundException(userId);
+
+        await dataProvider.AddPlayerToGameAsync(game.Id, user.Id);
+        logger.LogInformation("Player {UserId} added successfully to game {GameId}", userId, gameId);
+    }
+
+    public async Task RemovePlayerFromLobbyAsync(Guid gameId, string userId)
+    {
+        logger.LogInformation("Attempting to remove player {UserId} from game {GameId} lobby...", userId, gameId);
+
+        var game = await dataProvider.GetGameDetailsAsync(gameId)
+            ?? throw new GameNotFoundException(gameId);
+
+        gameValidator.ValidateGameState(game, GameStatus.Waiting);
+
+        var user = game.Players.FirstOrDefault(p => p.Id == userId);
+        if (user is null)
+        {
+            logger.LogWarning("User {UserId} not found in game {GameId}.", userId, gameId);
+            return;
+        }
+
+        logger.LogInformation("Removing player {UserId} from game {GameId}...", userId, gameId);
+        try
+        {
+            await dataProvider.RemovePlayerFromGameAsync(game.Id, user.Id);
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+            throw;
+        }
+
+        if ((bool)user.IsHost)
+        {
+            logger.LogInformation("User {UserId} is the host of game {GameId}. Reassigning host...", userId, gameId);
+            // await dataProvider.UpdateGameAsync(game.Id, GameUpdate.WithHost(user.Id));
+
+
+            var nextHost = game.Players.FirstOrDefault(p => p.Id != user.Id);
+            if (nextHost is not null)
+            {
+                logger.LogInformation("Assigning user {NextHostId} as new host for game {GameId}.", nextHost.Id, gameId);
+                await dataProvider.UpdateGameAsync(game.Id, GameUpdate.WithHost(nextHost.Id));
+            }
+            else
+            {
+                logger.LogInformation("No other players left in game {GameId}. Removing game.", gameId);
+                await dataProvider.RemoveGameAsync(game.Id);
+            }
+        }
+
+        logger.LogInformation("Player {UserId} successfully removed from game {GameId}.", userId, gameId);
+    }
+
+    public async Task UpdateGameSettingsAsync(Guid gameId, int timerInMinutes, int maxScore,
+        IEnumerable<MethodType> enabledMethods)
+    {
+        logger.LogInformation("Updating settings for game {GameId}", gameId);
+        var game = await GetGameDetailsAsync(gameId);
+        gameValidator.ValidateGameState(game, GameStatus.Waiting);
+        gameValidator.ValidateGameSettings(game);
+
+        game.TimerInMinutes = timerInMinutes;
+        game.MaxScore = maxScore;
+        game.EnabledMethods = enabledMethods.ToList();
+
+        await dataProvider.UpdateGameAsync(game.Id, GameUpdate.WithSettings(timerInMinutes, maxScore, game.EnabledMethods));
+
+        logger.LogInformation("Game settings updated for game {GameId}: Timer={TimerInMinutes}, MaxScore={MaxScore}, EnabledMethods={EnabledMethods}",
+            gameId, timerInMinutes, maxScore, string.Join(", ", game.EnabledMethods));
+    }
+
+    public async Task<(User nextActivePlayer, Word nextWord)> StartGameAsync(Guid gameId, string currentUserId)
+    {
+        logger.LogInformation("Starting game {GameId} for user {UserId}", gameId, currentUserId);
+        var game = await GetGameDetailsAsync(gameId);
+        var player = await userService.GetUserByIdAsync(currentUserId)
+            ?? throw new UserNotFoundException(currentUserId);
+
+        gameValidator.ValidateGameState(game, GameStatus.Waiting);
+        gameValidator.ValidateGameSettings(game);
+
+        await dataProvider.UpdateGameAsync(game.Id, GameUpdate.WithStatus(GameStatus.InProgress));
+
+        var nextActivePlayer = GetNextActivePlayer(game, player.Id);
+        var nextMethodType = GetNextMethodType(game);
+        var nextWord = await GetNextWordAsync(game.Id, nextMethodType);
+
+        await dataProvider.CreateRoundAsync(game.Id, nextMethodType, nextWord.Id, nextActivePlayer.Id);
+
+        logger.LogInformation("Game {GameId} started successfully. Next active player: {NextActivePlayer}, Next word: {NextWord}, Next method: {NextMethod}",
+            gameId, nextActivePlayer.Username, nextWord.Value, nextMethodType);
+
+        return (nextActivePlayer, nextWord);
+    }
+
+    public async Task<bool> EndTurnAsync(Guid gameId, string actingPlayerId, string guessingPlayerId)
+    {
+        logger.LogInformation("Ending turn for game {GameId}. Acting player: {ActingPlayer}, Guessing player: {GuessingPlayer}",
+            gameId, actingPlayerId, guessingPlayerId);
+
+        var game = await GetGameDetailsAsync(gameId);
+        _ = await userService.GetUserByIdAsync(actingPlayerId)
+            ?? throw new UserNotFoundException(actingPlayerId);
+
+        gameValidator.ValidateGameState(game, GameStatus.InProgress);
+
+        var round = game.Rounds?.LastOrDefault()
+            ?? throw new InvalidOperationException("No active round found for the game.");
+
+        await dataProvider.SetRoundWinnerAsync(round.Id, guessingPlayerId);
+        await dataProvider.IncrementPlayerScoreAsync(gameId, guessingPlayerId);
+
+        game.Players.First(x => x.Id == guessingPlayerId).Score++;
+
+        logger.LogInformation("Round winner set for game {GameId}. Winner: {WinnerId}", gameId, guessingPlayerId);
+
+        if (game.Players.Any(player => player.Score >= game.MaxScore))
+        {
+            await FinishGameAsync(game, guessingPlayerId);
+            return true;
+        }
+
+        await StartNextRoundAsync(game, round);
+        return false;
+    }
+
+    public async Task HandleTimeUpAsync(Guid gameId)
+    {
+        var game = await GetGameDetailsAsync(gameId);
+        gameValidator.ValidateGameState(game, GameStatus.InProgress);
+
+        var round = game.Rounds?.LastOrDefault()
+            ?? throw new InvalidOperationException("No active round found for the game.");
+
+        await StartNextRoundAsync(game, round);
+    }
+
+    private static MethodType GetNextMethodType(Game game)
+    {
+        ArgumentNullException.ThrowIfNull(game);
+
+        var lastRound = game.Rounds?.LastOrDefault();
+        return lastRound is null
+            ? MethodType.Description
+            : (MethodType)(((int)lastRound.MethodType + 1) % Enum.GetValues<MethodType>().Length);
+    }
+
+    private static User GetNextActivePlayer(Game game, string currentActivePlayerId)
+    {
+        ArgumentNullException.ThrowIfNull(game);
+        ArgumentNullException.ThrowIfNull(game.Players);
+
+        var players = game.Players.ToList();
+        var currentIndex = players.FindIndex(p => p.Id == currentActivePlayerId);
+
+        if (currentIndex == -1)
+        {
+            throw new UserNotFoundException(currentActivePlayerId);
+        }
+
+        var nextIndex = (currentIndex + 1) % players.Count;
+        return players[nextIndex];
+    }
+
+    private async Task<Word> GetNextWordAsync(Guid gameId, MethodType methodType)
+    {
+        logger.LogInformation("Fetching next word for game {GameId} with method type {MethodType}", gameId, methodType);
+        var usedWordIds = await dataProvider.GetUsedWordIdsAsync(gameId);
+        var availableWords = await dataProvider.GetAvailableWordsAsync(methodType, usedWordIds);
+
+        if (availableWords.Count == 0)
+        {
+            logger.LogWarning("No available words for the next round in game {GameId}", gameId);
+            throw new InvalidOperationException("No available words for the next round.");
+        }
+
+        var nextWord = availableWords[Random.Shared.Next(availableWords.Count)];
+        logger.LogInformation("Next word selected for game {GameId}: {Word}", gameId, nextWord.Value);
+        return nextWord;
+    }
+
+    private async Task FinishGameAsync(Game game, string winnerId)
+    {
+        await dataProvider.UpdateGameAsync(game.Id, GameUpdate.WithStatus(GameStatus.Finished));
+        await dataProvider.UpdateGameAsync(game.Id, GameUpdate.WithWinner(winnerId));
+
+        logger.LogInformation("Game {GameId} finished. Winner: {WinnerId}", game.Id, winnerId);
+    }
+
+    private async Task StartNextRoundAsync(Game game, Round currentRound)
+    {
+        var nextActivePlayer = GetNextActivePlayer(game, currentRound.ActivePlayer.Id);
+        var nextMethodType = GetNextMethodType(game);
+        var nextWord = await GetNextWordAsync(game.Id, nextMethodType);
+
+        await dataProvider.CreateRoundAsync(game.Id, nextMethodType, nextWord.Id, nextActivePlayer.Id);
+
+        logger.LogInformation("New round created for game {GameId}. Next active player: {NextActivePlayer}, Next word: {NextWord}, Next method: {NextMethod}",
+            game.Id, nextActivePlayer.Username, nextWord.Value, nextMethodType);
+    }
+
+    public async Task<Game?> GetActiveGameForPlayerAsync(string userId)
+    {
+        return await dataProvider.GetActiveGameForPlayerAsync(userId);
+    }
+
+    public async Task<bool> LeaveGameAsync(Guid gameId, string userId)
+    {
+        var isGameOver = false;
+
+        var game = await dataProvider.GetGameDetailsAsync(gameId) ?? throw new GameNotFoundException(gameId);
+
+        if (game.Players.Count() <= 2 && game.Status == GameStatus.InProgress)
+        {
+            await dataProvider.UpdateGameAsync(gameId, GameUpdate.WithStatus(GameStatus.Finished));
+            isGameOver = true;
+        }
+
+        await dataProvider.RemovePlayerFromGameAsync(gameId, userId);
+
+        return isGameOver;
+    }
+}
+
+
+// File: Application\Games\GameStatus.cs
+--------------------------------------------------------------------------------
+using System.Text.Json.Serialization;
+
+namespace ActivityGameBackend.Application.Games;
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum GameStatus
+{
+    Waiting = 0,
+    InProgress = 1,
+    Finished = 2,
+    TimeUp = 3,
+}
+
+
+// File: Application\Games\GameUpdate.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Application.Games;
+
+public class GameUpdate
+{
+    public GameStatus? Status { get; set; }
+    public string? HostId { get; set; }
+    public string? WinnerId { get; set; }
+    public int? TimerInMinutes { get; set; }
+    public int? MaxScore { get; set; }
+    public IEnumerable<MethodType>? EnabledMethods { get; set; }
+    
+    // Helper factory methods for common update scenarios
+    public static GameUpdate WithStatus(GameStatus status) => new() { Status = status };
+    public static GameUpdate WithHost(string hostId) => new() { HostId = hostId };
+    public static GameUpdate WithWinner(string winnerId) => new() { WinnerId = winnerId };
+    public static GameUpdate WithSettings(int timer, int maxScore, IEnumerable<MethodType> methods) => new()
+    {
+        TimerInMinutes = timer,
+        MaxScore = maxScore,
+        EnabledMethods = methods,
+    };
+}
+
+
+// File: Application\Games\IGameServiceDataProvider.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Application.Games;
+public interface IGameServiceDataProvider : IScoped
+{
+    Task<Game?> GetGameDetailsAsync(Guid id);
+    Task<Game> CreateGameAsync(string hostId);
+    Task UpdateGameAsync(Guid gameId, GameUpdate update);
+    Task AddPlayerToGameAsync(Guid gameId, string playerId);
+    Task<Game?> GetActiveGameForPlayerAsync(string userId);
+    Task RemovePlayerFromGameAsync(Guid gameId, string userId);
+    Task SetRoundWinnerAsync(Guid roundId, string roundWinnerId);
+    Task<List<int>> GetUsedWordIdsAsync(Guid gameId);
+    Task<List<Word>> GetAvailableWordsAsync(MethodType methodType, List<int> usedWordIds);
+    Task CreateRoundAsync(Guid gameId, MethodType methodType, int wordId, string playerId);
+    Task IncrementPlayerScoreAsync(Guid gameId, string userId);
+    Task ResetPlayersStatus(Guid gameId);
+    Task RemoveGameAsync(Guid gameId);
+}
+
+
+// File: Application\Games\MethodType.cs
+--------------------------------------------------------------------------------
+using System.Text.Json.Serialization;
+
+namespace ActivityGameBackend.Application.Games;
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum MethodType
+{
+    Drawing = 0,       // Rajzolás
+    Description = 1,   // Körülírás
+    Mimic = 2,         // Mutogatás
+}
+
+
+// File: Application\Games\Round.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Application.Games;
+
+public sealed record Round
+{
+    public required Guid Id { get; init; }
+    public required Guid GameId { get; set; }
+    public string? RoundWinnerId { get; set; }
+    public required MethodType MethodType { get; init; }
+    public required Word Word { get; init; }
+    public required User ActivePlayer { get; init; }
+}
+
+
+// File: Application\Games\Word.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Application.Games;
+
+public sealed record Word
+{
+    public required int Id { get; init; }
+    public required string Value { get; init; }
+    public required MethodType Method { get; init; }
+}
+
+
+// File: Application\Games\Validation\GameValidator.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Exceptions;
+
+namespace ActivityGameBackend.Application.Games.Validation;
+
+public interface IGameValidator : IScoped
+{
+    void ValidateGameState(Game game, GameStatus expectedStatus);
+    void ValidateGameSettings(Game game);
+}
+
+public class GameValidator : IGameValidator
+{
+    public void ValidateGameState(Game game, GameStatus expectedStatus)
+    {
+        ArgumentNullException.ThrowIfNull(game);
+        if (game.Status != expectedStatus)
+        {
+            throw new InvalidGameStateException(expectedStatus);
+        }
+    }
+
+    public void ValidateGameSettings(Game game)
+    {
+        ArgumentNullException.ThrowIfNull(game);
+        if (game.TimerInMinutes <= 1)
+        {
+            throw new InvalidGameSettingsException("timer", 1);
+        }
+        if (game.MaxScore <= 1)
+        {
+            throw new InvalidGameSettingsException("max score", 1);
+        }
+        if (game.Players == null || !game.Players.Any())
+        {
+            throw new InvalidPlayerCountException();
+        }
+    }
+}
+
+
+// File: Application\Helpers\GuardClauses.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Application.Helpers;
+
+public static class GuardClauses
+{
+    public static T EnsureNotNull<T>(this T? value, Func<Exception> exceptionFactory) where T : class
+    {
+        ArgumentNullException.ThrowIfNull(exceptionFactory);
+
+        return value ?? throw exceptionFactory();
+    }
+}
+
+// File: Application\Statistics\GlobalStatistics.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Application.Statistics;
+
+public class GlobalStatistics
+{
+    public double AverageScore { get; set; }
+    public double WinRate { get; set; }  // Percentage
+    public double LossRate { get; set; } // Percentage
+    public List<PlayerRanking> PlayerRankings { get; set; } = new();
+}
+
+
+// File: Application\Statistics\IStatisticsServiceDataProvider.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Games;
+
+namespace ActivityGameBackend.Application.Statistics;
+
+public interface IStatisticsServiceDataProvider : IScoped
+{
+    Task<List<Game>> GetFinishedGamesAsync();
+    Task<List<Game>> GetGamesForUserAsync(string userId);
+}
+
+
+// File: Application\Statistics\PlayerRanking.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Application.Statistics;
+
+public class PlayerRanking
+{
+    public string Username { get; set; }
+    public int TotalScore { get; set; }
+}
+
+
+// File: Application\Statistics\StatisticsService.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Exceptions;
+using ActivityGameBackend.Application.Games;
+using Microsoft.Extensions.Logging;
+
+namespace ActivityGameBackend.Application.Statistics;
+
+public interface IStatisticsService : IScoped
+{
+    Task<GlobalStatistics> GetGlobalStatisticsAsync();
+    Task<UserStatistics> GetUserStatisticsAsync(string userId);
+}
+
+public class StatisticsService(ILogger<StatisticsService> logger, IUserService userService, IStatisticsServiceDataProvider dataProvider) : IStatisticsService
+{
+    public async Task<GlobalStatistics> GetGlobalStatisticsAsync()
+    {
+        var finishedGames = await dataProvider.GetFinishedGamesAsync();
+
+        if (finishedGames.Count == 0)
+        {
+            return new GlobalStatistics
+            {
+                AverageScore = 0, WinRate = 0, LossRate = 0, PlayerRankings = new List<PlayerRanking>(),
+            };
+        }
+
+        // Calculate Average Score
+        double averageScore = finishedGames.Average(g => g.Players.Average(p => p.Score));
+
+        // Calculate Win and Loss Rates
+        var totalGames = finishedGames.Count;
+        var totalWins = finishedGames.Count(g => g.Winner?.Id != null);
+        var winRate = (double)totalWins / totalGames * 100;
+        var lossRate = 100 - winRate;
+
+        // Calculate Player Rankings
+        var playerScores = finishedGames
+            .SelectMany(g => g.Players)
+            .GroupBy(p => p.Id)
+            .Select(g => new PlayerRanking
+            {
+                Username = g.First().Username, TotalScore = g.Sum(p => p.Score),
+            })
+            .OrderByDescending(p => p.TotalScore)
+            .ToList();
+
+        return new GlobalStatistics
+        {
+            AverageScore = Math.Round(averageScore, 2), WinRate = Math.Round(winRate, 2), LossRate = Math.Round(lossRate, 2), PlayerRankings = playerScores,
+        };
+    }
+
+    public async Task<UserStatistics> GetUserStatisticsAsync(string userId)
+    {
+        var user = await userService.GetUserByIdAsync(userId) ?? throw new UserNotFoundException(userId);
+
+        var userGames = await dataProvider.GetGamesForUserAsync(userId);
+
+        var gamesPlayed = userGames.Count;
+        var gamesWon = userGames.Count(g => g.Winner?.Id == userId);
+        var gamesLost = gamesPlayed - gamesWon;
+        var winRate = gamesPlayed > 0 ? (double)gamesWon / gamesPlayed * 100 : 0;
+        double averageScore = gamesPlayed > 0 ? userGames.Average(g => g.Players.First(p => p.Id == userId).Score) : 0;
+
+        return new UserStatistics
+        {
+            Username = user.Username,
+            GamesPlayed = gamesPlayed,
+            GamesWon = gamesWon,
+            GamesLost = gamesLost,
+            WinRate = Math.Round(winRate, 2),
+            AverageScore = Math.Round(averageScore, 2),
+        };
+    }
+}
+
+
+// File: Application\Statistics\UserStatistics.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Application.Statistics;
+
+public class UserStatistics
+{
+    public string Username { get; set; }
+    public int GamesPlayed { get; set; }
+    public int GamesWon { get; set; }
+    public int GamesLost { get; set; }
+    public double WinRate { get; set; } // Percentage
+    public double AverageScore { get; set; }
+}
+
+
+// File: Application\Users\IUserServiceDataProvider.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Application.Users;
+
+public interface IUserServiceDataProvider : IScoped
+{
+    Task<User?> GetUserByIdAsync(string id);
+    Task<User> CreateUserAsync(User user);
+    Task<User> UpdateUserAsync(User user);
+}
+
+
+// File: Application\Users\User.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Application.Users;
+
+public sealed record User
+{
+    public required string Id { get; init; }
+    public required string Email { get; init; }
+    public required string Username { get; set; }
+    public int Score { get; set; }
+    public bool IsHost { get; set; }
+}
+
+
+
+// File: Application\Users\UserService.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Exceptions;
+using ActivityGameBackend.Application.Helpers;
+
+namespace ActivityGameBackend.Application.Users;
+
+public interface IUserService : IScoped
+{
+    Task<User?> GetUserByIdAsync(string id);
+    Task<User> CreateUserAsync(string id, string email, string userName);
+    Task<User> UpdateUserAsync(User user);
+}
+
+//TODO DELETE this and move to gameservice
+public class UserService(IUserServiceDataProvider dataProvider) : IUserService
+{
+    public async Task<User> CreateUserAsync(string id, string email, string userName)
+    {
+        var user = new User
+        {
+            Id = id,
+            Email = email,
+            Username = userName,
+            Score = 0,
+            IsHost = false,
+        };
+
+        return await dataProvider.CreateUserAsync(user);
+    }
+
+    public async Task<User?> GetUserByIdAsync(string id) => await dataProvider.GetUserByIdAsync(id);
+    public async Task<User> UpdateUserAsync(User user) => (await dataProvider.UpdateUserAsync(user)).EnsureNotNull(() => throw new UserNotFoundException(user.Id));
+}
+
+
+// File: Common.Core\HostingEnvironments.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Common.Core;
+
+public static class HostingEnvironments
+{
+    public const string Development = "Development";
+    public const string Production = "Production";
+}
+
+// File: Common.Core\IScoped.cs
+--------------------------------------------------------------------------------
+
+namespace ActivityGameBackend.Common.Core;
+
+public interface IScoped
+{
+}
+
+// File: Common.Core\ISingleton.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Common.Core;
+
+public interface ISingleton;
+
+// File: Common.Core\ITransient.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Common.Core;
+
+public interface ITransient;
+
+// File: Common.Core\Reflection\AssemblyScanner.cs
+--------------------------------------------------------------------------------
+
+using System.Reflection;
+
+namespace ActivityGameBackend.Common.Core.Reflection;
+public static class AssemblyScanner
+{
+    public static IEnumerable<Assembly> GetAssemblies(string assemblyPrefix)
+    {
+        var path = AppContext.BaseDirectory;
+        var directory = new DirectoryInfo(path);
+
+        if (!directory.Exists)
+            throw new InvalidOperationException($"FATAL error: directory at path '{path}' does not exist");
+
+        // Logging the files in the directory
+        Console.WriteLine($"Scanning directory: {path}");
+
+        foreach (var file in directory.GetFiles("*.dll"))
+        {
+            Console.WriteLine($"Found DLL: {file.Name}");
+        }
+
+        var assemblyList = directory
+            .GetFiles($"{assemblyPrefix}*.dll")  // Adjust this pattern as needed
+            .Select(file => Assembly.Load(AssemblyName.GetAssemblyName(file.FullName).ToString())).ToList();
+
+        if (assemblyList.Count == 0)
+        {
+            Console.WriteLine("No assemblies found with the specified prefix.");
+        }
+
+        return assemblyList;
+    }
+
+    public static IEnumerable<(Assembly Assembly, string ResourceName)> GetResourceDetailsFromAssemblies(string assemblyPrefix, Predicate<string> resourceFilter)
+    {
+        var containerAssemblies = GetAssemblies(assemblyPrefix)
+            .Where(x => x.GetManifestResourceNames()
+            .Any(y => resourceFilter(y)));
+
+        foreach (var containerAssembly in containerAssemblies)
+        {
+            var resourceName = containerAssembly.GetManifestResourceNames().FirstOrDefault(x => resourceFilter(x));
+            if (!string.IsNullOrWhiteSpace(resourceName))
+                yield return (containerAssembly, resourceName);
+        }
+    }
+
+    public static string? GetResourceFromAssemblies(string assemblyPrefix, Predicate<string> resourceFilter)
+    {
+        var containerAssemblies = GetAssemblies(assemblyPrefix)
+            .Where(x => x.GetManifestResourceNames()
+            .Any(y => resourceFilter(y)));
+
+        var containerAssembly = containerAssemblies.FirstOrDefault();
+        if (containerAssembly == null) return null;
+
+        var resourceName = containerAssembly.GetManifestResourceNames().FirstOrDefault(x => resourceFilter(x));
+        if (resourceName == null) return null;
+
+        var resourceStream = containerAssembly.GetManifestResourceStream(resourceName);
+        if (resourceStream == null) return null;
+
+        using var streamReader = new StreamReader(resourceStream);
+        return streamReader.ReadToEnd();
+    }
+}
+
+// File: Common.Core\Reflection\TypeExtensions.cs
+--------------------------------------------------------------------------------
+
+using System.Reflection;
+
+namespace ActivityGameBackend.Common.Core.Reflection;
+public static class TypeExtensions
+{
+    public static Dictionary<string, T?> GetFieldValues<T>(this Type type) where T : class
+    {
+        ArgumentNullException.ThrowIfNull(type);
+
+        return type
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.FieldType == typeof(T))
+            .ToDictionary(f => f.Name, f => f.GetValue(null) as T);
+    }
+}
+
+// File: Persistence.Mssql\ApplicationDbContext.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Persistence.Mssql.Games;
+using Microsoft.EntityFrameworkCore;
+
+namespace ActivityGameBackend.Persistence.Mssql;
+
+public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : DbContext(options)
+{
+    public DbSet<UserEntity> Users { get; set; }
+    public DbSet<GameEntity> Games { get; set; }
+    public DbSet<RoundEntity> Rounds { get; set; }
+    public DbSet<WordEntity> Words { get; set; }
+    public DbSet<GamePlayerEntity> GamePlayers { get; set; }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+
+        // Apply all configurations in the assembly
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
+    }
+}
+
+
+// File: Persistence.Mssql\DataSeeder.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Persistence.Mssql;
+
+public static class DataSeeder
+{
+    public static async Task SeedWordsAsync(ApplicationDbContext context)
+    {
+        if (!context.Words.Any())
+        {
+            var words = new List<WordEntity>
+            {
+                 new()
+                 {
+                    Value = "bokszkesztyű", Method = MethodType.Drawing,
+                },
+                new()
+                {
+                    Value = "rendőrautó", Method = MethodType.Drawing,
+                },
+                new()
+                {
+                    Value = "méhkas", Method = MethodType.Drawing,
+                },
+                new()
+                {
+                    Value = "szamárlap", Method = MethodType.Drawing,
+                },
+                new()
+                {
+                    Value = "játszótér", Method = MethodType.Drawing,
+                },
+                new()
+                {
+                    Value = "erdőhatár", Method = MethodType.Drawing,
+                },
+                new()
+                {
+                    Value = "fészekvirágzatúak", Method = MethodType.Drawing,
+                },
+                new()
+                {
+                    Value = "sörhab", Method = MethodType.Drawing,
+                },
+                new()
+                {
+                    Value = "tettenérés", Method = MethodType.Description,
+                },
+                new()
+                {
+                    Value = "lángész", Method = MethodType.Description,
+                },
+                new()
+                {
+                    Value = "dugattyúhenger", Method = MethodType.Description,
+                },
+                new()
+                {
+                    Value = "korallzátony", Method = MethodType.Description,
+                },
+                new()
+                {
+                    Value = "hadkötelezettség", Method = MethodType.Description,
+                },
+                new()
+                {
+                    Value = "pártkönyv", Method = MethodType.Description,
+                },
+                new()
+                {
+                    Value = "zuhanyrózsa", Method = MethodType.Description,
+                },
+                new()
+                {
+                    Value = "lánc: faház", Method = MethodType.Description,
+                },
+                new()
+                {
+                    Value = "karének", Method = MethodType.Description,
+                },
+                new()
+                {
+                    Value = "talajtorna", Method = MethodType.Mimic,
+                },
+                new()
+                {
+                    Value = "darázsfészek", Method = MethodType.Mimic,
+                },
+                new()
+                {
+                    Value = "zászlórúd", Method = MethodType.Mimic,
+                },
+                new()
+                {
+                    Value = "gyalupad", Method = MethodType.Mimic,
+                },
+                new()
+                {
+                    Value = "körtefa", Method = MethodType.Mimic,
+                },
+                new()
+                {
+                    Value = "mászókötél", Method = MethodType.Mimic,
+                },
+                new()
+                {
+                    Value = "levélszekrény", Method = MethodType.Mimic,
+                },
+                new()
+                {
+                    Value = "teveszőr", Method = MethodType.Mimic,
+                },
+                new()
+                {
+                    Value = "Airport", Method = MethodType.Description,
+                },
+                new()
+                {
+                    Value = "Football", Method = MethodType.Mimic,
+                },
+            };
+
+            context.Words.AddRange(words);
+            await context.SaveChangesAsync().ConfigureAwait(false);
+        }
+    }
+}
+
+
+// File: Persistence.Mssql\GlobalUsings.cs
+--------------------------------------------------------------------------------
+global using ActivityGameBackend.Application.Games;
+global using ActivityGameBackend.Persistence.Mssql.Users;
+global using ActivityGameBackend.Persistence.Mssql.Rounds;
+global using ActivityGameBackend.Persistence.Mssql.Words;
+
+// File: Persistence.Mssql\Games\GameEntity.cs
+--------------------------------------------------------------------------------
+using System.Diagnostics.CodeAnalysis;
+
+namespace ActivityGameBackend.Persistence.Mssql.Games;
+
+[SuppressMessage("ReSharper", "EntityFramework.ModelValidation.UnlimitedStringLength")]
+public sealed class GameEntity
+{
+    public Guid Id { get; set; }
+
+    public string HostId { get; set; }
+    public UserEntity Host { get; set; }
+
+    public string? WinnerId { get; set; }
+    public UserEntity? Winner { get; set; }
+
+    public ICollection<GamePlayerEntity> GamePlayers { get; set; } = new List<GamePlayerEntity>();
+    public ICollection<RoundEntity> Rounds { get; set; } = new List<RoundEntity>();
+
+    public GameStatus Status { get; set; }
+    public int TimerInMinutes { get; set; }
+    public int MaxScore { get; set; }
+    public List<MethodType> EnabledMethods { get; set; } = new();
+    public DateTimeOffset CreatedAtUtc { get; init; }
+
+    public override string? ToString()
+    {
+        return $"GameEntity: Id={Id}, Host={Host}, Timer={TimerInMinutes}, MaxScore={MaxScore}, Status={Status}";
+    }
+}
+
+
+// File: Persistence.Mssql\Games\GameEntityConfiguration.cs
+--------------------------------------------------------------------------------
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace ActivityGameBackend.Persistence.Mssql.Games;
+
+public class GameEntityConfiguration : IEntityTypeConfiguration<GameEntity>
+{
+    public void Configure(EntityTypeBuilder<GameEntity> builder)
+    {
+        builder.HasKey(g => g.Id);
+
+        builder.HasOne(g => g.Host)
+            .WithMany()
+            .HasForeignKey(g => g.HostId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne(g => g.Winner)
+            .WithMany()
+            .HasForeignKey(g => g.WinnerId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasMany(g => g.GamePlayers)
+            .WithOne(gp => gp.Game)
+            .HasForeignKey(gp => gp.GameId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Property(g => g.Status)
+            .IsRequired();
+
+        builder.Property(g => g.TimerInMinutes)
+            .IsRequired();
+
+        builder.Property(g => g.MaxScore)
+            .IsRequired();
+
+        builder.Property(g => g.EnabledMethods)
+            .HasConversion(
+                v => string.Join(',', v),
+                v => v.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(Enum.Parse<MethodType>).ToList());
+    }
+}
+
+
+// File: Persistence.Mssql\Games\GamePlayerEntity.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Persistence.Mssql.Games;
+
+public class GamePlayerEntity
+{
+    public Guid GameId { get; set; }
+    public GameEntity Game { get; set; }
+
+    public string UserId { get; set; }
+    public UserEntity User { get; set; }
+
+    public int Score { get; set; }
+    public bool IsHost { get; set; }
+}
+
+
+// File: Persistence.Mssql\Games\GamePlayerEntityConfiguration.cs
+--------------------------------------------------------------------------------
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace ActivityGameBackend.Persistence.Mssql.Games;
+
+public class GamePlayerEntityConfiguration : IEntityTypeConfiguration<GamePlayerEntity>
+{
+    public void Configure(EntityTypeBuilder<GamePlayerEntity> builder)
+    {
+        builder.HasKey(gp => new { gp.GameId, gp.UserId });
+
+        builder.HasOne(gp => gp.Game)
+            .WithMany(g => g.GamePlayers)
+            .HasForeignKey(gp => gp.GameId);
+
+        builder.HasOne(gp => gp.User)
+            .WithMany(u => u.GamePlayers)
+            .HasForeignKey(gp => gp.UserId);
+
+        builder.Property(gp => gp.Score)
+            .IsRequired()
+            .HasDefaultValue(0);
+
+        builder.Property(gp => gp.IsHost)
+            .IsRequired()
+            .HasDefaultValue(false);
+    }
+}
+
+
+// File: Persistence.Mssql\Games\GameServiceDataProvider.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Exceptions;
+using AutoMapper;
+using Microsoft.EntityFrameworkCore;
+
+namespace ActivityGameBackend.Persistence.Mssql.Games;
+
+public class GameServiceDataProvider(ApplicationDbContext context, IMapper mapper) : IGameServiceDataProvider
+{
+
+    public async Task<Game?> GetGameDetailsAsync(Guid id)
+    {
+        var gameEntity = await context.Games
+            .Include(g => g.Host)
+            .Include(g => g.GamePlayers)
+                .ThenInclude(gp => gp.User)
+            .Include(g => g.Rounds)
+                .ThenInclude(r => r.Word)
+            .FirstOrDefaultAsync(g => g.Id == id)
+            .ConfigureAwait(false);
+
+        var game = mapper.Map<Game>(gameEntity);
+
+        return game;
+    }
+
+    public async Task<Game> CreateGameAsync(string hostId)
+    {
+        var gameEntity = new GameEntity
+        {
+            Id = Guid.NewGuid(),
+            HostId = hostId,
+            Status = GameStatus.Waiting,
+            TimerInMinutes = 2,
+            MaxScore = 10,
+            EnabledMethods = [MethodType.Description],
+            CreatedAtUtc = DateTime.UtcNow,
+        };
+
+        var gamePlayer = new GamePlayerEntity
+        {
+            GameId = gameEntity.Id,
+            UserId = hostId,
+            IsHost = true,
+            Score = 0,
+        };
+
+        context.Games.Add(gameEntity);
+        context.GamePlayers.Add(gamePlayer);
+
+        await context.SaveChangesAsync().ConfigureAwait(false);
+
+        var game = mapper.Map<Game>(gameEntity);
+
+        return game;
+    }
+
+    public async Task UpdateGameAsync(Guid gameId, GameUpdate update)
+    {
+        var gameEntity = await context.Games
+            .FirstAsync(g => g.Id == gameId)
+            .ConfigureAwait(false);
+
+        if (update.Status.HasValue)
+            gameEntity.Status = update.Status.Value;
+
+        if (update.HostId != null)
+            gameEntity.HostId = update.HostId;
+
+        if (update.WinnerId != null)
+            gameEntity.WinnerId = update.WinnerId;
+
+        if (update.TimerInMinutes.HasValue)
+            gameEntity.TimerInMinutes = update.TimerInMinutes.Value;
+
+        if (update.MaxScore.HasValue)
+            gameEntity.MaxScore = update.MaxScore.Value;
+
+        if (update.EnabledMethods != null)
+            gameEntity.EnabledMethods = update.EnabledMethods.ToList();
+
+        await context.SaveChangesAsync();
+    }
+
+    public async Task RemoveGameAsync(Guid gameId)
+    {
+        var gameEntity = await context.Games.FirstAsync(g => g.Id == gameId).ConfigureAwait(false);
+        context.Games.Remove(gameEntity);
+        await context.SaveChangesAsync().ConfigureAwait(false);
+    }
+
+    public async Task UpdateUserHostStatusAsync(Guid gameId, string userId)
+    {
+        var gamePlayer = await context.GamePlayers
+            .FirstOrDefaultAsync(gp => gp.GameId == gameId && gp.UserId == userId)
+            .ConfigureAwait(false);
+
+        if (gamePlayer != null)
+        {
+            gamePlayer.IsHost = true;
+            await context.SaveChangesAsync().ConfigureAwait(false);
+        }
+    }
+
+
+    public async Task<Game?> GetActiveGameForPlayerAsync(string userId)
+    {
+        var gameEntity = await context.Games
+          .Include(g => g.GamePlayers)
+          .ThenInclude(gp => gp.User)
+          .Include(g => g.Host)
+          .Include(g => g.Rounds)
+          .FirstOrDefaultAsync(g => g.GamePlayers.Any(p => p.UserId == userId) && g.Status != GameStatus.Finished);
+
+        var game = mapper.Map<Game>(gameEntity);
+
+        return game;
+    }
+
+
+    public async Task AddPlayerToGameAsync(Guid gameId, string playerId)
+    {
+        var gamePlayerExists = await context.GamePlayers
+            .AnyAsync(gp => gp.GameId == gameId && gp.UserId == playerId)
+            .ConfigureAwait(false);
+
+        if (!gamePlayerExists)
+        {
+            var gamePlayer = new GamePlayerEntity
+            {
+                GameId = gameId,
+                UserId = playerId,
+                IsHost = false,
+                Score = 0,
+            };
+
+            context.GamePlayers.Add(gamePlayer);
+            await context.SaveChangesAsync().ConfigureAwait(false);
+        }
+    }
+
+    public async Task RemovePlayerFromGameAsync(Guid gameId, string userId)
+    {
+        var gamePlayer = await context.GamePlayers
+            .FirstOrDefaultAsync(gp => gp.GameId == gameId && gp.UserId == userId)
+            .ConfigureAwait(false);
+
+        if (gamePlayer != null)
+        {
+            context.GamePlayers.Remove(gamePlayer);
+            await context.SaveChangesAsync().ConfigureAwait(false);
+        }
+    }
+
+    public async Task SetRoundWinnerAsync(Guid roundId, string roundWinnerId)
+    {
+        var currentRoundEntity = await context.Rounds.FirstAsync(r => r.Id == roundId).ConfigureAwait(false);
+        currentRoundEntity.RoundWinnerId = roundWinnerId;
+
+        await context.SaveChangesAsync().ConfigureAwait(false);
+    }
+
+    public async Task UpdatePlayerScoreAsync(Guid gameId, string userId, int scoreIncrement)
+    {
+        var gamePlayer = await context.GamePlayers
+            .FirstOrDefaultAsync(gp => gp.GameId == gameId && gp.UserId == userId)
+            .ConfigureAwait(false);
+
+        if (gamePlayer is null)
+            throw new AppException("Player not found in game", ErrorCode.UserNotFound);
+
+        gamePlayer.Score += scoreIncrement;
+
+        await context.SaveChangesAsync().ConfigureAwait(false);
+    }
+
+    public async Task<List<int>> GetUsedWordIdsAsync(Guid gameId)
+    {
+        return await context.Rounds
+            .Where(r => r.GameId == gameId && r.WordId.HasValue)
+            .Select(r => r.WordId!.Value)
+            .ToListAsync()
+            .ConfigureAwait(false);
+    }
+
+    public async Task<List<Word>> GetAvailableWordsAsync(MethodType methodType, List<int> usedWordIds)
+    {
+        var wordEntities = await context.Words
+            .Where(w => w.Method == methodType && !usedWordIds.Contains(w.Id))
+            .Select(w => w)
+            .ToListAsync()
+            .ConfigureAwait(false);
+
+        var words = mapper.Map<List<Word>>(wordEntities);
+
+        return words;
+    }
+
+    public async Task CreateRoundAsync(Guid gameId, MethodType methodType, int wordId, string playerId)
+    {
+        var roundEntity = new RoundEntity
+        {
+            GameId = gameId,
+            MethodType = methodType,
+            WordId = wordId,
+            ActivePlayerId = playerId,
+            CreatedAtUtc = DateTime.UtcNow,
+        };
+
+        context.Rounds.Add(roundEntity);
+        await context.SaveChangesAsync().ConfigureAwait(false);
+    }
+
+    public async Task IncrementPlayerScoreAsync(Guid gameId, string userId)
+    {
+        var gamePlayer = await context.GamePlayers
+            .FirstOrDefaultAsync(gp => gp.GameId == gameId && gp.UserId == userId)
+            .ConfigureAwait(false);
+
+        if (gamePlayer is null)
+            throw new InvalidOperationException($"Player with ID {userId} not found in game {gameId}.");
+
+        gamePlayer.Score += 1;
+        await context.SaveChangesAsync().ConfigureAwait(false);
+    }
+
+    public async Task ResetPlayersStatus(Guid gameId)
+    {
+        var gamePlayers = await context.GamePlayers
+            .Where(gp => gp.GameId == gameId)
+            .ToListAsync()
+            .ConfigureAwait(false);
+
+        foreach (var gamePlayer in gamePlayers)
+        {
+            gamePlayer.IsHost = false;
+            gamePlayer.Score = 0;
+        }
+
+        await context.SaveChangesAsync().ConfigureAwait(false);
+    }
+
+
+}
+
+
+// File: Persistence.Mssql\Mappings\EntityToDomainMappingProfile.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Users;
+using ActivityGameBackend.Persistence.Mssql.Games;
+using AutoMapper;
+
+public class EntityToDomainMappingProfile : Profile
+{
+    public EntityToDomainMappingProfile()
+    {
+        // Word Entity -> Domain
+        CreateMap<WordEntity, Word>()
+            .ForMember(dest => dest.Id, opt => opt.MapFrom(src => src.Id))
+            .ForMember(dest => dest.Value, opt => opt.MapFrom(src => src.Value))
+            .ForMember(dest => dest.Method, opt => opt.MapFrom(src => src.Method));
+
+        // User Entity -> Domain
+        CreateMap<UserEntity, User>()
+            .ForMember(dest => dest.Id, opt => opt.MapFrom(src => src.Id))
+            .ForMember(dest => dest.Email, opt => opt.MapFrom(src => src.Email))
+            .ForMember(dest => dest.Username, opt => opt.MapFrom(src => src.Username))
+            .ForMember(dest => dest.Score, opt => opt.Ignore());
+
+        CreateMap<GamePlayerEntity, User>()
+     .ForMember(dest => dest.Id, opt => opt.MapFrom(src => src.UserId))
+     .ForMember(dest => dest.Email, opt => opt.MapFrom(src => src.User.Email))
+     .ForMember(dest => dest.Username, opt => opt.MapFrom(src => src.User.Username))
+     .ForMember(dest => dest.IsHost, opt => opt.MapFrom(src => src.IsHost))
+     .ForMember(dest => dest.Score, opt => opt.MapFrom(src => src.Score));
+
+        // Round Entity -> Domain
+        CreateMap<RoundEntity, Round>()
+            .ForMember(dest => dest.Id, opt => opt.MapFrom(src => src.Id))
+            .ForMember(dest => dest.GameId, opt => opt.MapFrom(src => src.GameId))
+            .ForMember(dest => dest.RoundWinnerId, opt => opt.MapFrom(src => src.RoundWinnerId))
+            .ForMember(dest => dest.MethodType, opt => opt.MapFrom(src => src.MethodType))
+            .ForMember(dest => dest.Word, opt => opt.MapFrom(src => src.Word))
+            .ForMember(dest => dest.ActivePlayer, opt =>
+                opt.MapFrom(src => src.ActivePlayer));
+
+        // Game Entity -> Domain
+        CreateMap<GameEntity, Game>()
+            .ForMember(dest => dest.Id, opt => opt.MapFrom(src => src.Id))
+            .ForMember(dest => dest.Host, opt => opt.MapFrom(src => src.Host))
+            .ForMember(dest => dest.TimerInMinutes, opt => opt.MapFrom(src => src.TimerInMinutes))
+            .ForMember(dest => dest.MaxScore, opt => opt.MapFrom(src => src.MaxScore))
+            .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.Status))
+            .ForMember(dest => dest.EnabledMethods, opt => opt.MapFrom(src => src.EnabledMethods))
+            .ForMember(dest => dest.Players, opt => opt.MapFrom(src => src.GamePlayers))
+            .ForMember(dest => dest.Winner, opt => opt.MapFrom(src => src.Winner))
+            .ForMember(dest => dest.Rounds, opt => opt.MapFrom(src => src.Rounds));
+
+        // Reverse mappings (Domain -> Entity)
+        CreateMap<Word, WordEntity>()
+            .ForMember(dest => dest.CreatedAtUtc, opt => opt.Ignore());
+
+        CreateMap<User, UserEntity>()
+            .ForMember(dest => dest.GamePlayers, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedAtUtc, opt => opt.Ignore());
+
+        CreateMap<Round, RoundEntity>()
+            .ForMember(dest => dest.Game, opt => opt.Ignore())
+            .ForMember(dest => dest.RoundWinner, opt => opt.Ignore())
+            .ForMember(dest => dest.Word, opt => opt.Ignore())
+            .ForMember(dest => dest.WordId, opt => opt.MapFrom(src => src.Word.Id))
+            .ForMember(dest => dest.ActivePlayer, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedAtUtc, opt => opt.Ignore());
+
+        CreateMap<Game, GameEntity>()
+            .ForMember(dest => dest.Host, opt => opt.Ignore())
+            .ForMember(dest => dest.Winner, opt => opt.Ignore())
+            .ForMember(dest => dest.GamePlayers, opt => opt.Ignore())
+            .ForMember(dest => dest.Rounds, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedAtUtc, opt => opt.Ignore());
+    }
+}
+
+
+// File: Persistence.Mssql\Rounds\RoundEntity.cs
+--------------------------------------------------------------------------------
+using System.Diagnostics.CodeAnalysis;
+using ActivityGameBackend.Persistence.Mssql.Games;
+
+namespace ActivityGameBackend.Persistence.Mssql.Rounds;
+[SuppressMessage("ReSharper", "EntityFramework.ModelValidation.UnlimitedStringLength")]
+public sealed class RoundEntity
+{
+    public Guid Id { get; init; }
+    public required Guid GameId { get; init; }
+    public GameEntity? Game { get; init; }
+    public string? RoundWinnerId { get; set; }
+    public UserEntity? RoundWinner { get; init; }
+    public required MethodType MethodType { get; init; }
+    public int? WordId { get; init; }
+    public WordEntity? Word { get; init; }
+    public required string ActivePlayerId { get; init; }
+    public UserEntity? ActivePlayer { get; init; }
+    public required DateTimeOffset CreatedAtUtc { get; init; }
+}
+
+
+// File: Persistence.Mssql\Rounds\RoundEntityConfiguration.cs
+--------------------------------------------------------------------------------
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace ActivityGameBackend.Persistence.Mssql.Rounds;
+public sealed class RoundEntityConfiguration : IEntityTypeConfiguration<RoundEntity>
+{
+    public void Configure(EntityTypeBuilder<RoundEntity> builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        builder.ToTable("Rounds");
+
+        builder.HasKey(r => r.Id);
+
+        builder.Property(r => r.Id)
+            .IsRequired()
+            .ValueGeneratedOnAdd();
+
+        builder.HasOne(r => r.Game)
+            .WithMany(g => g.Rounds)
+            .HasForeignKey(r => r.GameId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(r => r.RoundWinner)
+            .WithMany()
+            .HasForeignKey(r => r.RoundWinnerId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne(r => r.Word)
+            .WithMany()
+            .HasForeignKey(r => r.WordId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne(r => r.ActivePlayer)
+            .WithMany()
+            .HasForeignKey(r => r.ActivePlayerId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Property(r => r.MethodType)
+            .IsRequired()
+            .HasConversion<int>();
+
+        builder.Property(m => m.CreatedAtUtc)
+            .IsRequired();
+    }
+}
+
+// File: Persistence.Mssql\ServiceCollectionExtensions\ApplicationDbContextServiceExtensions.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Persistence.Mssql.Games;
+using ActivityGameBackend.Common.Core;
+using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace ActivityGameBackend.Persistence.Mssql.ServiceCollectionExtensions;
+public static class AppDbContextServiceExtensions
+{
+    public static IServiceCollection AddMsSqlAppDbContext(this IServiceCollection services,
+        IConfiguration configuration, string? environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var connectionString = configuration.GetConnectionString("DefaultConnection");
+        var builder = new SqlConnectionStringBuilder(connectionString);
+
+        if (environment == HostingEnvironments.Production)
+        {
+            services.AddDbContext<ApplicationDbContext>(
+                options => options.UseSqlServer(builder.ConnectionString));
+        }
+        else
+        {
+            services.AddDbContext<ApplicationDbContext>(
+                options => options.UseSqlServer(builder.ConnectionString).EnableSensitiveDataLogging());
+        }
+
+        return services;
+    }
+
+    public static IServiceCollection AddMsSqlDbServiceProvider(this IServiceCollection services)
+    {
+        services.AddScoped<IGameServiceDataProvider, GameServiceDataProvider>();
+        return services;
+    }
+}
+
+
+
+// File: Persistence.Mssql\Statistics\StatisticsServiceDataProvider.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Statistics;
+using AutoMapper;
+using Microsoft.EntityFrameworkCore;
+
+namespace ActivityGameBackend.Persistence.Mssql.Statistics;
+
+public class StatisticsServiceDataProvider(ApplicationDbContext context, IMapper mapper) : IStatisticsServiceDataProvider
+{
+
+    public async Task<List<Game>> GetFinishedGamesAsync()
+    {
+        var gameEntities =  await context.Games
+            .Include(g => g.GamePlayers)
+            .ThenInclude(p => p.User)
+            .Where(g => g.Status == GameStatus.Finished)
+            .ToListAsync();
+        
+        return mapper.Map<List<Game>>(gameEntities);
+    }
+    
+    public async Task<List<Game>> GetGamesForUserAsync(string userId)
+    {
+        var gameEntities = await context.Games
+            .Include(g => g.GamePlayers)
+            .Where(g => g.GamePlayers.Any(p => p.UserId == userId))
+            .ToListAsync();
+        
+        return mapper.Map<List<Game>>(gameEntities);
+    }
+}
+
+
+// File: Persistence.Mssql\Users\UserEntity.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Persistence.Mssql.Games;
+
+namespace ActivityGameBackend.Persistence.Mssql.Users;
+public sealed class UserEntity
+{
+    public string Id { get; set; } = default!;
+    public string Email { get; set; } = default!;
+    public string Username { get; set; } = default!;
+
+    public ICollection<GamePlayerEntity> GamePlayers { get; set; } = new List<GamePlayerEntity>();
+
+    public DateTimeOffset CreatedAtUtc { get; init; }
+}
+
+
+// File: Persistence.Mssql\Users\UserEntityConfiguration.cs
+--------------------------------------------------------------------------------
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace ActivityGameBackend.Persistence.Mssql.Users;
+
+public class UserEntityConfiguration : IEntityTypeConfiguration<UserEntity>
+{
+    public void Configure(EntityTypeBuilder<UserEntity> builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        
+        builder.HasKey(u => u.Id);
+
+        builder.Property(u => u.Email)
+            .IsRequired();
+
+        builder.Property(u => u.Username)
+            .IsRequired();
+
+        builder.HasMany(u => u.GamePlayers)
+            .WithOne(gp => gp.User)
+            .HasForeignKey(gp => gp.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+
+// File: Persistence.Mssql\Users\UserServiceDataProvider.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Users;
+using AutoMapper;
+using Microsoft.EntityFrameworkCore;
+
+namespace ActivityGameBackend.Persistence.Mssql.Users;
+
+public class UserServiceDataProvider(ApplicationDbContext context, IMapper mapper) : IUserServiceDataProvider
+{
+
+    public async Task<User?> GetUserByIdAsync(string id)
+    {
+        var userEntity = await context.Users.FirstOrDefaultAsync(u => u.Id == id);
+        return mapper.Map<User>(userEntity);
+    }
+
+    public async Task<User> CreateUserAsync(User user)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+
+        var userEntity = new UserEntity
+        {
+            Id = user.Id,
+            Email = user.Email,
+            Username = user.Username,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+        };
+
+        context.Users.Add(userEntity);
+        await context.SaveChangesAsync();
+
+        return mapper.Map<User>(userEntity);
+    }
+
+    public async Task<User> UpdateUserAsync(User user)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+
+        var userEntity = await context.Users.FindAsync(user.Id) ?? throw new ArgumentException("User not found", nameof(user));
+        userEntity.Email = user.Email;
+        userEntity.Username = user.Username;
+
+        await context.SaveChangesAsync();
+
+        return mapper.Map<User>(userEntity);
+    }
+}
+
+
+// File: Persistence.Mssql\Words\WordEntity.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Persistence.Mssql.Words;
+public sealed class WordEntity
+{
+    public int Id { get; init; }
+    public required string Value { get; init; }
+    public required MethodType Method { get; init; }
+    public DateTimeOffset CreatedAtUtc { get; init; }
+
+}
+
+
+
+// File: Persistence.Mssql\Words\WordEntityConfiguration.cs
+--------------------------------------------------------------------------------
+
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace ActivityGameBackend.Persistence.Mssql.Words;
+public class WordEntityConfiguration : IEntityTypeConfiguration<WordEntity>
+{
+    public void Configure(EntityTypeBuilder<WordEntity> builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        builder.ToTable("Words");
+
+        builder.HasKey(w => w.Id);
+
+        builder.Property(w => w.Id)
+            .ValueGeneratedOnAdd(); // This sets the Id to be autogenerated
+
+        builder.Property(w => w.Value)
+            .IsRequired()
+            .HasMaxLength(100);
+
+        builder.Property(w => w.Method)
+            .IsRequired()
+            .HasConversion<int>();
+
+        builder.Property(m => m.CreatedAtUtc)
+            .IsRequired();
+    }
+}
+
+
+// File: Web\GlobalUsings.cs
+--------------------------------------------------------------------------------
+#pragma warning disable SA1200 // Using directives should be placed correctly
+global using Microsoft.AspNetCore.Mvc;
+#pragma warning restore SA1200 // Using directives should be placed correctly
+
+
+// File: Web\Program.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Persistence.Mssql;
+using ActivityGameBackend.Persistence.Mssql.ServiceCollectionExtensions;
+using ActivityGameBackend.Web.Filters;
+using ActivityGameBackend.Web.Mappings;
+using ActivityGameBackend.Web.ServiceCollectionExtensions;
+using dotenv.net;
+using dotenv.net.Utilities;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.Google;
+using Microsoft.EntityFrameworkCore;
+
+var builder = WebApplication.CreateBuilder(args);
+var environment = builder.Environment.EnvironmentName;
+
+var envFilePath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+DotEnv.Load(options: new DotEnvOptions(
+    envFilePaths: new[] { envFilePath },
+    probeForEnv: true
+));
+
+var clientId = EnvReader.GetStringValue("GOOGLE_CLIENT_ID");
+var clientSecret = EnvReader.GetStringValue("GOOGLE_CLIENT_SECRET");
+
+if (clientId is null || clientSecret is null)
+{
+    throw new InvalidOperationException("Google ClientId and ClientSecret most be provided.");
+}
+
+var configuration = new ConfigurationBuilder()
+    .SetBasePath(Directory.GetCurrentDirectory())
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+    .AddJsonFile($"appsettings.{environment}.json", optional: true)
+    .AddJsonFile($"appsettings.{environment}.local.json", optional: true)
+    .AddEnvironmentVariables()
+    .Build();
+
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+
+builder.Services
+    .AddMsSqlAppDbContext(configuration, environment)
+    .AddMsSqlDbServiceProvider();
+
+builder.Services.AddAuthentication(options =>
+    {
+        options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = GoogleDefaults.AuthenticationScheme;
+    })
+    .AddCookie()
+    .AddGoogle(options =>
+    {
+        options.ClientId = clientId;
+        options.ClientSecret = clientSecret;
+    });
+
+builder.Services
+    .AddAutoMapper(typeof(DtoMappingProfiles))
+    .AddAutoMapper(typeof(EntityToDomainMappingProfile))
+    .AddMemoryCache()
+    .ConfigureScrutor("ActivityGameBackend");
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("SignalRClientPolicy", builder =>
+    {
+        builder
+            .WithOrigins("http://localhost:5173")
+            .AllowAnyMethod()
+            .AllowAnyHeader()
+            .AllowCredentials();
+    });
+});
+
+builder.Services.AddSignalR();
+
+builder.Services.AddControllers(options =>
+{
+    options.Filters.Add<GlobalExceptionFilter>();
+});
+
+builder.Services
+    .AddHttpClient()
+    .AddHttpContextAccessor()
+    .AddEndpointsApiExplorer()
+    .AddSwaggerGen();
+
+var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
+    app.UseSwagger().UseSwaggerUI();
+    ApplyMigrationsAndSeedData(app);
+}
+
+app.UseStaticFiles();
+
+app.UseRouting();
+
+app.UseCors("AllowAll");
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
+// app.MapHub<GameHub>("/hubs/game");
+
+app.Run();
+
+static void ApplyMigrationsAndSeedData(WebApplication app)
+{
+    using var scope = app.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    dbContext.Database.Migrate();
+
+    DataSeeder.SeedWordsAsync(dbContext).GetAwaiter().GetResult();
+}
+
+
+// File: Web\Controllers\Authentication\AuthController.cs
+--------------------------------------------------------------------------------
+using System.Security.Claims;
+using System.Text.Json;
+using ActivityGameBackend.Application.Users;
+using ActivityGameBackend.Web.Controllers.Authentication.Request;
+using ActivityGameBackend.Web.Controllers.Authentication.Response;
+using ActivityGameBackend.Web.Services;
+using ActivityGameBackend.Web.Shared;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
+
+namespace ActivityGameBackend.Web.Controllers.Authentication;
+
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public class AuthController(IUserService userService, IIdentityService identityService, IHttpClientFactory httpClientFactory) : ControllerBase
+{
+    private static readonly Uri GoogleUserInfoEndpoint = new("https://www.googleapis.com/oauth2/v3/userinfo");
+
+    [HttpPost("register")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ApiResponse<UserResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Register([FromHeader(Name = "Authorization")] string authorization)
+    {
+        if (string.IsNullOrEmpty(authorization) || !authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new ApiResponse { Success = false, Message = "Invalid authorization header" });
+
+        var token = authorization["Bearer ".Length..].Trim();
+
+        try
+        {
+            using var userInfo = await GetGoogleUserInfoAsync(token);
+            var user = await GetOrCreateUserAsync(userInfo);
+            await SignInUserAsync(user);
+
+            return Ok(new ApiResponse<UserResponse>
+            {
+                Success = true,
+                Data = new UserResponse()
+                {
+                    Id = user.Id,
+                    Email = user.Email,
+                    IsHost = user.IsHost,
+                    Score = user.Score,
+                    Username = user.Username,
+                },
+            });
+        }
+        catch (HttpRequestException ex)
+        {
+            return BadRequest(new ApiResponse { Success = false, Message = $"Error validating Google token: {ex.Message}" });
+        }
+        catch (JsonException ex)
+        {
+            return BadRequest(new ApiResponse { Success = false, Message = $"Error parsing user info: {ex.Message}" });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new ApiResponse { Success = false, Message = $"An unexpected error occurred: {ex.Message}" });
+        }
+    }
+
+    [HttpGet("me")]
+    [ProducesResponseType(typeof(ApiResponse<UserResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetCurrentUser()
+    {
+        var id = identityService.GetId();
+        if (string.IsNullOrEmpty(id))
+            return Unauthorized(new ApiResponse { Success = false, Message = "User not authenticated" });
+
+        var user = await userService.GetUserByIdAsync(id);
+        if (user != null)
+        {
+            return Ok(new ApiResponse<UserResponse>
+            {
+                Success = true,
+                Data = new UserResponse()
+                {
+                    Id = user.Id,
+                    Email = user.Email,
+                    Username = user.Username,
+                    Score = user.Score,
+                    IsHost = user.IsHost,
+                },
+            });
+        }
+
+        return NotFound(new ApiResponse { Success = false, Message = "User not found" });
+    }
+
+    [HttpPost("logout")]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Logout()
+    {
+        await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        return Ok(new ApiResponse { Success = true, Message = "Logged out successfully" });
+    }
+
+    [HttpPost("username")]
+    [ProducesResponseType(typeof(ApiResponse<UserResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> SetUsername([FromBody] SetUsernameRequest? request)
+    {
+        if (request == null || string.IsNullOrWhiteSpace(request.Username))
+            return BadRequest(new ApiResponse { Success = false, Message = "Invalid username request" });
+
+        var id = identityService.GetId();
+        if (string.IsNullOrEmpty(id))
+            return Unauthorized(new ApiResponse { Success = false, Message = "User not authenticated" });
+
+        var user = await userService.GetUserByIdAsync(id);
+        if (user == null)
+            return NotFound(new ApiResponse { Success = false, Message = "User not found" });
+
+        user.Username = request.Username;
+        await userService.UpdateUserAsync(user);
+        return Ok(new ApiResponse<UserResponse>
+        {
+            Success = true,
+            Data = new UserResponse()
+            {
+                Id = user.Id,
+                Email = user.Email,
+                IsHost = user.IsHost,
+                Score = user.Score,
+                Username = user.Username,
+            },
+        });
+    }
+
+    private async Task<JsonDocument> GetGoogleUserInfoAsync(string token)
+    {
+        using var httpClient = httpClientFactory.CreateClient();
+        httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        using var response = await httpClient.GetAsync(GoogleUserInfoEndpoint);
+        response.EnsureSuccessStatusCode();
+        var content = await response.Content.ReadAsStringAsync();
+        return JsonDocument.Parse(content);
+    }
+
+    private async Task<User> GetOrCreateUserAsync(JsonDocument userInfo)
+    {
+        var root = userInfo.RootElement;
+        var userId = root.GetProperty("sub").GetString() ?? throw new ArgumentException("User ID is missing", nameof(userInfo));
+        var email = root.GetProperty("email").GetString() ?? throw new ArgumentException("Email is missing", nameof(userInfo));
+        var name = root.GetProperty("name").GetString() ?? throw new ArgumentException("Name is missing", nameof(userInfo));
+
+        var existingUser = await userService.GetUserByIdAsync(userId);
+        return existingUser ?? await userService.CreateUserAsync(userId, email, name);
+    }
+
+    private async Task SignInUserAsync(User user)
+    {
+        var claims = new List<Claim>
+    {
+        new (ClaimTypes.NameIdentifier, user.Id),
+        new (ClaimTypes.Email, user.Email),
+        new (ClaimTypes.Name, user.Username),
+    };
+
+        var claimsIdentity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+        var claimsPrincipal = new ClaimsPrincipal(claimsIdentity);
+
+        await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, claimsPrincipal);
+    }
+}
+
+
+// File: Web\Controllers\Authentication\Request\SetUsernameRequest.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Web.Controllers.Authentication.Request
+{
+    public sealed record SetUsernameRequest()
+    {
+        required public string Username { get; init; }
+    }
+}
+
+
+// File: Web\Controllers\Authentication\Response\UserResponse.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Web.Controllers.Authentication.Response;
+
+public sealed record UserResponse
+{
+    required public string Id { get; init; }
+    required public string Email { get; init; }
+    required public string Username { get; init; } = string.Empty;
+    required public int? Score { get; init; }
+    public bool? IsHost { get; init; }
+}
+
+
+// File: Web\Controllers\Game\GamesController.cs
+--------------------------------------------------------------------------------
+using System.Net.Mime;
+using ActivityGameBackend.Application.Games;
+using ActivityGameBackend.Application.Users;
+using ActivityGameBackend.Web.Controllers.Game.Request;
+using ActivityGameBackend.Web.Controllers.Game.Response;
+using ActivityGameBackend.Web.Services;
+using ActivityGameBackend.Web.Shared;
+using AutoMapper;
+using Microsoft.AspNetCore.Authorization;
+using Swashbuckle.AspNetCore.Annotations;
+
+namespace ActivityGameBackend.Web.Controllers.Game;
+
+/// <summary>
+/// Controller for managing game operations including creation, joining, and gameplay actions
+/// </summary>
+[ApiController]
+[Route("api/games")] // Changed to follow Google Cloud API Design Guide
+[Authorize]
+[Produces(MediaTypeNames.Application.Json)]
+[SwaggerTag("Manage game operations and player interactions")]
+public class GamesController(
+    IMapper mapper,
+    ILogger<GamesController> logger,
+    IIdentityService identityService,
+    IGameService gameService,
+    IUserService userService,
+    IGameEventService gameEventService)
+    : ControllerBase
+{
+    private string CurrentUserId => identityService.GetId();
+
+    /// <summary>
+    /// Retrieves the current active game for the authenticated user
+    /// </summary>
+    /// <remarks>
+    /// Returns the active game details if the user is currently in a game, otherwise returns null
+    /// </remarks>
+    /// <response code="200">Successfully retrieved game information</response>
+    /// <response code="401">User is not authenticated</response>
+    [HttpGet("current")]
+    [SwaggerOperation(
+        Summary = "Get current active game",
+        Description = "Retrieves the current active game for the authenticated user")]
+    [ProducesResponseType(typeof(ApiResponse<GameResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> GetCurrentGame()
+    {
+        var userId = identityService.GetId();
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(new ApiResponse
+            {
+                Success = false, Message = "User not authenticated",
+            });
+        }
+
+        var game = await gameService.GetActiveGameForPlayerAsync(userId);
+        if (game == null)
+        {
+            return Ok(new ApiResponse<GameResponse>
+            {
+                Success = true, Data = null,
+            });
+        }
+
+        var gameResponse = mapper.Map<GameResponse>(game);
+        return Ok(new ApiResponse<GameResponse>
+        {
+            Success = true, Data = gameResponse,
+        });
+    }
+
+    /// <summary>
+    /// Retrieves detailed information about a specific game
+    /// </summary>
+    /// <param name="gameId">The unique identifier of the game</param>
+    [HttpGet("{gameId}")] // Changed from "details/{gameId:guid}" to follow Google Cloud API Design Guide
+    [SwaggerOperation(Summary = "Get game details", Description = "Retrieves detailed information about a specific game")]
+    [ProducesResponseType(typeof(ApiResponse<GameResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetGameDetails(
+        [FromRoute, SwaggerParameter("The unique identifier of the game")]
+        Guid gameId)
+    {
+        var game = await gameService.GetGameDetailsAsync(gameId);
+
+        var gameResponse = mapper.Map<GameResponse>(game);
+        return Ok(new ApiResponse<GameResponse>
+        {
+            Success = true, Data = gameResponse,
+        });
+    }
+
+    /// <summary>
+    /// Creates a new game instance
+    /// </summary>
+    /// <remarks>
+    /// Creates a new game and assigns the authenticated user as the host
+    /// </remarks>
+    [HttpPost] // Changed from "create" to follow Google Cloud API Design Guide
+    [SwaggerOperation(
+        Summary = "Create new game",
+        Description = "Creates a new game instance with the current user as host")]
+    [ProducesResponseType(typeof(ApiResponse<CreateGameResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> CreateGame()
+    {
+        logger.LogInformation("Create Game endpoint hit for user {UserId}", CurrentUserId);
+
+        if (string.IsNullOrEmpty(CurrentUserId))
+        {
+            return Unauthorized(new ApiResponse
+            {
+                Success = false, Message = "User not authenticated",
+            });
+        }
+
+        var gameId = await gameService.CreateGameAsync(CurrentUserId);
+        logger.LogInformation("Game created with ID: {GameId}", gameId);
+
+        return Ok(new ApiResponse<CreateGameResponse>
+        {
+            Data = new CreateGameResponse
+            {
+                GameId = gameId,
+            },
+        });
+    }
+
+    /// <summary>
+    /// Adds a player to an existing game
+    /// </summary>
+    /// <param name="gameId">The unique identifier of the game to join</param>
+    [HttpPost("{gameId}/join")]
+    [SwaggerOperation(
+        Summary = "Join existing game",
+        Description = "Adds the current user as a player to an existing game")]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> JoinGame(Guid gameId)
+    {
+        await gameService.AddPlayerToGameAsync(gameId, CurrentUserId);
+        await gameEventService.BroadcastEventAsync(gameId, "UserJoinedLobby", $"{CurrentUserId} successfully joined the game");
+
+        return Ok(new ApiResponse
+        {
+            Message = $"{CurrentUserId} successfully joined the game",
+        });
+    }
+
+    /// <summary>
+    /// Initiates the start of a game
+    /// </summary>
+    /// <param name="gameId">The unique identifier of the game to start</param>
+    [HttpPost("{gameId}/start")]
+    [SwaggerOperation(Summary = "Start game", Description = "Initiates the start of a game, transitioning it from lobby to active state")]
+    [ProducesResponseType(typeof(ApiResponse<StartGameResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> StartGame(
+        [FromRoute, SwaggerParameter("The unique identifier of the game to start")]
+        Guid gameId)
+    {
+        await gameService.StartGameAsync(gameId, CurrentUserId);
+
+        var response = new StartGameResponse
+        {
+            GameId = gameId, NextActivePlayer = "n/a", NextWord = "n/a", MethodType = MethodType.Description.ToString(),
+        };
+
+        await gameEventService.BroadcastEventAsync(gameId, "GameStarted", "Game started successfully");
+        logger.LogInformation("Game {GameId} started", gameId);
+
+        //TODO startgame response not needed? Fropntend doesnt use any properties? Investigate
+
+        return Ok(new ApiResponse<StartGameResponse>
+        {
+            Data = response, Message = "Game started successfully",
+        });
+    }
+
+    /// <summary>
+    /// Ends the current turn
+    /// </summary>
+    /// <param name="gameId">The unique identifier of the game</param>
+    /// <param name="request">The end turn request containing the winner information</param>
+    [HttpPost("{gameId}/turns/end")]
+    [SwaggerOperation(
+        Summary = "End current turn",
+        Description = "Ends the current player's turn and processes the turn results")]
+    [ProducesResponseType(typeof(ApiResponse<EndTurnResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> EndTurn(
+        [FromRoute, SwaggerParameter("The unique identifier of the game")]
+        Guid gameId,
+        [FromBody, SwaggerRequestBody("The end turn request details")]
+        EndTurnRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var isGameWon = await gameService.EndTurnAsync(gameId, CurrentUserId, request.WinnerUserId);
+
+        var response = new EndTurnResponse
+        {
+            IsGameWon = isGameWon,
+        };
+
+        if (!isGameWon)
+        {
+            await gameEventService.BroadcastEventAsync(gameId, "RoundEnded", "Round ended for game");
+            logger.LogInformation("Round ended for game {GameId}", gameId);
+        }
+        else
+        {
+            await gameEventService.BroadcastEventAsync(gameId, "GameEnded", "Game ended");
+            logger.LogInformation("Game {GameId} ended. Winner: {WinnerId}", gameId, request.WinnerUserId);
+        }
+
+        //TODO Use IsGameFinished instead of IsGameWon? Or return ApiResponse -> Frontend doesnt use isgamewon property, get the info from sse event
+        return Ok(new ApiResponse<EndTurnResponse>
+        {
+            Success = true, Data = response, Message = isGameWon ? "Game ended" : "Turn ended successfully",
+        });
+    }
+
+    /// <summary>
+    /// Removes a player from the game lobby
+    /// </summary>
+    /// <param name="gameId">The unique identifier of the game</param>
+    [HttpPost("{gameId}/lobby/leave")]
+    [SwaggerOperation(Summary = "Leave game lobby", Description = "Removes the current player from the game lobby")]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> LeaveLobby(
+        [FromRoute, SwaggerParameter("The unique identifier of the game")]
+        Guid gameId)
+    {
+        var userId = CurrentUserId;
+
+        await gameService.RemovePlayerFromLobbyAsync(gameId, userId);
+        await gameEventService.BroadcastEventAsync(gameId, "PlayerLeftLobby", $"User {userId} left the lobby");
+
+        return Ok(new ApiResponse
+        {
+            Success = true, Message = "User left the lobby successfully.",
+        });
+    }
+
+    /// <summary>
+    /// Removes a player from an active game
+    /// </summary>
+    /// <param name="gameId">The unique identifier of the game</param>
+    [HttpPost("{gameId}/leave")]
+    [SwaggerOperation(
+        Summary = "Leave active game",
+        Description = "Removes the current player from an active game")]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> LeaveGame(
+        [FromRoute, SwaggerParameter("The unique identifier of the game")]
+        Guid gameId)
+    {
+        var userId = identityService.GetId();
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(new ApiResponse
+            {
+                Success = false, Message = "User not authenticated",
+            });
+        }
+
+        var isGameOver = await gameService.LeaveGameAsync(gameId, userId);
+
+        if (isGameOver)
+        {
+            await gameEventService.BroadcastEventAsync(gameId, "GameEnded", $"User {userId} left the lobby, game ended");
+        }
+        else
+        {
+            await gameEventService.BroadcastEventAsync(gameId, "PlayerLeftLobby", $"User {userId} left the lobby");
+        }
+
+        return Ok(new ApiResponse
+        {
+            Success = true, Message = "Left the game successfully",
+        });
+    }
+
+    /// <summary>
+    /// Updates the settings for a game
+    /// </summary>
+    /// <param name="gameId">The unique identifier of the game</param>
+    /// <param name="request">The updated game settings</param>
+    [HttpPatch("{gameId}/settings")]
+    [SwaggerOperation(Summary = "Update game settings", Description = "Updates the settings for an existing game")]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateGameSettings(
+        [FromRoute, SwaggerParameter("The unique identifier of the game")]
+        Guid gameId,
+        [FromBody, SwaggerRequestBody("The updated game settings")]
+        UpdateGameSettingsRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        await gameService.UpdateGameSettingsAsync(gameId, request.Timer, request.MaxScore, request.EnabledMethods);
+        await gameEventService.BroadcastEventAsync(gameId, "GameSettingsUpdated", $"Game settings just updated.");
+
+        return Ok(new ApiResponse
+        {
+            Success = true, Message = "Game settings updated successfully",
+        });
+    }
+
+    /// <summary>
+    /// Handles the time-up event for a game round
+    /// </summary>
+    /// <param name="gameId">The unique identifier of the game</param>
+    [HttpPost("{gameId}/time-up")]
+    [SwaggerOperation(Summary = "Handle time up event", Description = "Processes the time-up event for a game round")]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> HandleTimeUp(
+        [FromRoute, SwaggerParameter("The unique identifier of the game")]
+        Guid gameId)
+    {
+        await gameService.HandleTimeUpAsync(gameId);
+        await gameEventService.BroadcastEventAsync(gameId, "TimeUp", "Round time is up!");
+
+        return Ok(new ApiResponse
+        {
+            Success = true, Message = "Time up handled successfully",
+        });
+    }
+}
+
+
+// File: Web\Controllers\Game\Request\EndTurnRequest.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Web.Controllers.Game.Request;
+
+public sealed record EndTurnRequest
+{
+    required public string WinnerUserId { get; init; }
+}
+
+
+// File: Web\Controllers\Game\Request\UpdateGameSettingsRequest.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Games;
+
+namespace ActivityGameBackend.Web.Controllers.Game.Request;
+
+public sealed record UpdateGameSettingsRequest
+{
+    required public int Timer { get; set; }
+    required public int MaxScore { get; set; }
+    required public List<MethodType> EnabledMethods { get; init; }
+}
+
+
+// File: Web\Controllers\Game\Response\CreateGameResponse.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Web.Controllers.Game.Response
+{
+    public sealed record CreateGameResponse
+    {
+        public Guid GameId { get; set; }
+    }
+}
+
+
+// File: Web\Controllers\Game\Response\EndTurnResponse.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Web.Controllers.Game.Response
+{
+    public sealed record EndTurnResponse
+    {
+        required public bool IsGameWon { get; init; }
+    }
+}
+
+
+// File: Web\Controllers\Game\Response\GameResponse.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Games;
+
+namespace ActivityGameBackend.Web.Controllers.Game.Response;
+
+public sealed record GameResponse
+{
+    required public Guid Id { get; init; }
+    required public string HostId { get; init; }
+    required public int TimerInMinutes { get; init; }
+    required public int MaxScore { get; init; }
+    required public List<PlayerResponse> Players { get; init; } = [];
+    required public GameStatus Status { get; init; }
+    public RoundResponse? CurrentRound { get; init; }
+    required public List<MethodType> EnabledMethods { get; set; }
+}
+
+public sealed record PlayerResponse
+{
+    required public string Id { get; init; }
+    required public string Username { get; init; } = string.Empty;
+    required public int? Score { get; init; }
+    public bool? IsHost { get; init; }
+}
+
+public sealed record RoundResponse
+{
+    public int RoundNumber { get; set; }
+    required public MethodType MethodType { get; init; }
+    required public string Word { get; init; } = string.Empty;
+    required public string ActivePlayerUsername { get; init; }
+}
+
+
+// File: Web\Controllers\Game\Response\StartGameResponse.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Web.Controllers.Game.Response
+{
+    public sealed record StartGameResponse
+    {
+        required public Guid GameId { get; set; }
+        required public string NextActivePlayer { get; init; } = string.Empty;
+        required public string NextWord { get; init; } = string.Empty;
+        required public string MethodType { get; init; } = string.Empty;
+    }
+}
+
+
+// File: Web\Controllers\SignalR\GameEventsController.cs
+--------------------------------------------------------------------------------
+// File: Controllers/GameEventsController.cs
+
+namespace ActivityGameBackend.Web.Controllers.SignalR
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class GameEventsController : ControllerBase
+    {
+        private readonly IGameEventService gameEventService;
+        private readonly ILogger<GameEventsController> logger;
+
+        public GameEventsController(IGameEventService gameEventService, ILogger<GameEventsController> logger)
+        {
+            this.gameEventService = gameEventService;
+            this.logger = logger;
+        }
+
+        [HttpGet("{gameId}")]
+        public async Task InitiateGameEventStream(Guid gameId)
+        {
+            Response.Headers.Add("Content-Type", "text/event-stream");
+            Response.Headers.Add("Cache-Control", "no-cache");
+            Response.Headers.Add("Connection", "keep-alive");
+            Response.Headers.Add("Access-Control-Allow-Origin", "*");
+
+            var clientId = Guid.NewGuid().ToString();
+            var cancellationToken = HttpContext.RequestAborted;
+
+            try
+            {
+                // Register the client
+                gameEventService.AddClient(gameId, clientId, async (data) =>
+                {
+                    try
+                    {
+                        var eventData = $"data: {data}\n\n";
+                        await Response.WriteAsync(eventData);
+                        await Response.Body.FlushAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Error sending event data to client");
+                    }
+                });
+
+                // Send initial connection message
+                await Response.WriteAsync($": connected\n\n");
+                await Response.Body.FlushAsync();
+
+                // Keep the connection alive
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    // Send keep-alive comments to prevent connection from closing
+                    await Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
+                    await Response.WriteAsync(": keep-alive\n\n");
+                    await Response.Body.FlushAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error in SSE connection");
+            }
+            finally
+            {
+                gameEventService.RemoveClient(gameId, clientId);
+                logger.LogInformation("Client {ClientId} disconnected from game {GameId}", clientId, gameId);
+            }
+        }
+    }
+}
+
+
+// File: Web\Controllers\SignalR\GameEventService.cs
+--------------------------------------------------------------------------------
+// File: Services/GameEventService.cs
+
+using ActivityGameBackend.Common.Core;
+using System.Collections.Concurrent;
+
+public interface IGameEventService : ISingleton
+{
+    void AddClient(Guid gameId, string clientId, Func<string, Task> sendEvent);
+    void RemoveClient(Guid gameId, string clientId);
+    Task BroadcastEventAsync(Guid gameId, string eventName, object eventData);
+}
+
+public class GameEventService : IGameEventService
+{
+    private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, Func<string, Task>>> gameClients =
+        new ConcurrentDictionary<Guid, ConcurrentDictionary<string, Func<string, Task>>>();
+
+    public void AddClient(Guid gameId, string clientId, Func<string, Task> sendEvent)
+    {
+        var clients = gameClients.GetOrAdd(gameId, _ => new ConcurrentDictionary<string, Func<string, Task>>());
+        clients[clientId] = sendEvent;
+    }
+
+    public void RemoveClient(Guid gameId, string clientId)
+    {
+        if (gameClients.TryGetValue(gameId, out var clients))
+        {
+            clients.TryRemove(clientId, out _);
+            if (clients.IsEmpty)
+            {
+                gameClients.TryRemove(gameId, out _);
+            }
+        }
+    }
+
+    public async Task BroadcastEventAsync(Guid gameId, string eventName, object eventData)
+    {
+        if (gameClients.TryGetValue(gameId, out var clients))
+        {
+            var message = Newtonsoft.Json.JsonConvert.SerializeObject(new
+            {
+                @event = eventName,
+                data = eventData,
+            });
+
+            var tasks = new List<Task>();
+            foreach (var sendEvent in clients.Values)
+            {
+                tasks.Add(sendEvent(message));
+            }
+
+            await Task.WhenAll(tasks);
+        }
+    }
+}
+
+
+// File: Web\Controllers\Statistics\StatisticsController.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Games;
+using ActivityGameBackend.Application.Statistics;
+using ActivityGameBackend.Application.Users;
+using ActivityGameBackend.Web.Controllers.Game;
+using ActivityGameBackend.Web.Controllers.Game.Response;
+using ActivityGameBackend.Web.Controllers.Statistics.Response;
+using ActivityGameBackend.Web.Services;
+using ActivityGameBackend.Web.Shared;
+using AutoMapper;
+using Microsoft.AspNetCore.Authorization;
+using System.Net.Mime;
+
+namespace ActivityGameBackend.Web.Controllers.Statistics;
+
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public class StatisticsController(
+    IMapper mapper,
+    IIdentityService identityService,
+    IStatisticsService statisticsService)
+    : ControllerBase
+{
+    private string CurrentUserId => identityService.GetId();
+
+    [HttpGet("statistics/global")]
+    [AllowAnonymous]
+    [Produces(MediaTypeNames.Application.Json)]
+    [ProducesResponseType(typeof(ApiResponse<GetGlobalStatisticsResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetGlobalStatistics()
+    {
+        var statistics = await statisticsService.GetGlobalStatisticsAsync();
+
+        return Ok(new ApiResponse<GetGlobalStatisticsResponse>
+        {
+            Success = true, Data = mapper.Map<GetGlobalStatisticsResponse>(statistics),
+        });
+    }
+
+    [HttpGet("statistics/user")]
+    [Produces(MediaTypeNames.Application.Json)]
+    [ProducesResponseType(typeof(ApiResponse<GetUserStatisticsResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetUserStatistics()
+    {
+        var userId = identityService.GetId();
+
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(new ApiResponse
+            {
+                Success = false, Message = "User not authenticated",
+            });
+        }
+
+        var statistics = await statisticsService.GetUserStatisticsAsync(userId);
+        return Ok(new ApiResponse<GetUserStatisticsResponse>
+        {
+            Success = true, Data = mapper.Map<GetUserStatisticsResponse>(statistics),
+        });
+    }
+}
+
+
+// File: Web\Controllers\Statistics\Response\GetGlobalStatisticsResponse.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Web.Controllers.Statistics.Response;
+
+public sealed record GetGlobalStatisticsResponse
+{
+    public double AverageScore { get; set; }
+    public double WinRate { get; set; }
+    public double LossRate { get; set; }
+    public List<PlayerRankingResponse> PlayerRankings { get; set; } = new();
+}
+
+public sealed record PlayerRankingResponse
+{
+    public string Username { get; set; }
+    public int TotalScore { get; set; }
+}
+
+
+// File: Web\Controllers\Statistics\Response\GetUserStatisticsResponse.cs
+--------------------------------------------------------------------------------
+namespace ActivityGameBackend.Web.Controllers.Statistics.Response;
+
+public sealed record GetUserStatisticsResponse
+{
+    public string Username { get; set; }
+    public int GamesPlayed { get; set; }
+    public int GamesWon { get; set; }
+    public int GamesLost { get; set; }
+    public double WinRate { get; set; } // Percentage
+    public double AverageScore { get; set; }
+}
+
+
+// File: Web\Filters\GlobalExceptionFilter.cs
+--------------------------------------------------------------------------------
+using System.Net;
+using ActivityGameBackend.Application.Exceptions;
+using ActivityGameBackend.Web.Shared;
+using Microsoft.AspNetCore.Mvc.Filters;
+
+namespace ActivityGameBackend.Web.Filters;
+
+public class GlobalExceptionFilter(ILogger<GlobalExceptionFilter> logger) : IExceptionFilter
+{
+    public void OnException(ExceptionContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        ApiResponse response;
+        HttpStatusCode statusCode;
+
+        switch (context.Exception)
+        {
+            case AppException appEx:
+                statusCode = appEx.StatusCode;
+                response = new ApiResponse
+                {
+                    Success = false,
+                    Message = appEx.Message,
+                    ErrorCode = appEx.ErrorCode,
+                };
+                logger.LogWarning(context.Exception, "Application exception occurred.");
+                break;
+            default:
+                statusCode = HttpStatusCode.InternalServerError;
+                response = new ApiResponse
+                {
+                    Success = false,
+                    Message = context.Exception.Message,
+                    ErrorCode = 0, // Generic error code for unhandled exceptions
+                };
+                logger.LogError(context.Exception, "Unhandled exception");
+                break;
+        }
+
+        context.Result = new ObjectResult(response)
+        {
+            StatusCode = (int)statusCode,
+        };
+
+        context.ExceptionHandled = true;
+    }
+}
+
+
+// File: Web\Mappings\DtoMappingProfiles.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Games;
+using ActivityGameBackend.Application.Statistics;
+using ActivityGameBackend.Application.Users;
+using ActivityGameBackend.Web.Controllers.Game.Response;
+using ActivityGameBackend.Web.Controllers.Statistics.Response;
+using AutoMapper;
+
+namespace ActivityGameBackend.Web.Mappings;
+
+public sealed class DtoMappingProfiles : Profile
+{
+    public DtoMappingProfiles()
+    {
+        CreateMap<User, PlayerResponse>()
+            .ForMember(dest => dest.Id, opt => opt.MapFrom(src => src.Id))
+            .ForMember(dest => dest.Username, opt => opt.MapFrom(src => src.Username))
+            .ForMember(dest => dest.Score, opt => opt.MapFrom(src => src.Score))
+            .ForMember(dest => dest.IsHost, opt => opt.MapFrom(src => src.IsHost));
+
+        CreateMap<Round, RoundResponse>()
+            .ForMember(dest => dest.RoundNumber, opt => opt.Ignore())
+            .ForMember(dest => dest.MethodType, opt => opt.MapFrom(src => src.MethodType))
+            .ForMember(dest => dest.Word, opt => opt.MapFrom(src => src.Word.Value))
+            .ForMember(dest => dest.ActivePlayerUsername, opt => opt.MapFrom(src => src.ActivePlayer.Username));
+
+        CreateMap<Game, GameResponse>()
+            .ForMember(dest => dest.Id, opt => opt.MapFrom(src => src.Id))
+            .ForMember(dest => dest.HostId, opt => opt.MapFrom(src => src.Host.Id))
+            .ForMember(dest => dest.TimerInMinutes, opt => opt.MapFrom(src => src.TimerInMinutes))
+            .ForMember(dest => dest.MaxScore, opt => opt.MapFrom(src => src.MaxScore))
+            .ForMember(dest => dest.Players, opt => opt.MapFrom(src => src.Players))
+            .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.Status))
+            .ForMember(dest => dest.CurrentRound, opt =>
+                opt.MapFrom(src => src.Rounds != null && src.Rounds.Any()
+                    ? src.Rounds.Last()
+                    : null))
+            .ForMember(dest => dest.EnabledMethods, opt =>
+                opt.MapFrom(src => src.EnabledMethods.ToList()));
+
+        CreateMap<UserStatistics, GetUserStatisticsResponse>()
+            .ForMember(dest => dest.Username, opt => opt.MapFrom(src => src.Username))
+            .ForMember(dest => dest.GamesPlayed, opt => opt.MapFrom(src => src.GamesPlayed))
+            .ForMember(dest => dest.GamesWon, opt => opt.MapFrom(src => src.GamesWon))
+            .ForMember(dest => dest.GamesLost, opt => opt.MapFrom(src => src.GamesLost))
+            .ForMember(dest => dest.WinRate, opt => opt.MapFrom(src => src.WinRate))
+            .ForMember(dest => dest.AverageScore, opt => opt.MapFrom(src => src.AverageScore));
+
+        CreateMap<GlobalStatistics, GetGlobalStatisticsResponse>()
+            .ForMember(dest => dest.AverageScore, opt => opt.MapFrom(src => src.AverageScore))
+            .ForMember(dest => dest.WinRate, opt => opt.MapFrom(src => src.WinRate))
+            .ForMember(dest => dest.LossRate, opt => opt.MapFrom(src => src.LossRate))
+            .ForMember(dest => dest.PlayerRankings, opt => opt.MapFrom(src => src.PlayerRankings));
+
+        CreateMap<PlayerRanking, PlayerRankingResponse>()
+            .ForMember(dest => dest.Username, opt => opt.MapFrom(src => src.Username))
+            .ForMember(dest => dest.TotalScore, opt => opt.MapFrom(src => src.TotalScore));
+    }
+}
+
+
+// File: Web\ServiceCollectionExtensions\ScrutorExtensions.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Common.Core;
+using ActivityGameBackend.Common.Core.Reflection;
+
+namespace ActivityGameBackend.Web.ServiceCollectionExtensions;
+
+public static class ScrutorExtensions
+{
+    public static IServiceCollection ConfigureScrutor(this IServiceCollection services, string assemblyPrefix)
+    {
+        // more Scrutor examples and scenarios:
+        // https://andrewlock.net/using-scrutor-to-automatically-register-your-services-with-the-asp-net-core-di-container/
+        // Scrutpr Github repo:
+        // https://github.com/khellang/Scrutor
+        services.Scan(scan => scan
+            .FromAssemblies(AssemblyScanner.GetAssemblies(assemblyPrefix))
+            .AddClasses(classes => classes.AssignableTo<ITransient>())
+            .AsImplementedInterfaces()
+            .WithTransientLifetime()
+            .AddClasses(classes => classes.AssignableTo<IScoped>())
+            .AsSelfWithInterfaces()
+            .WithScopedLifetime()
+            .AddClasses(classes => classes.AssignableTo<ISingleton>())
+            .AsSelfWithInterfaces()
+            .WithSingletonLifetime());
+
+        return services;
+    }
+}
+
+
+// File: Web\Services\IdentityService.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Common.Core;
+using System.Security.Claims;
+
+namespace ActivityGameBackend.Web.Services;
+
+public interface IIdentityService : IScoped
+{
+    string GetId();
+
+    string GetEmail();
+
+    string GetUsername();
+}
+
+public class IdentityService(IHttpContextAccessor httpContextAccessor) : IIdentityService
+{
+    public string GetId()
+    {
+#pragma warning disable CS8603 // Possible null reference return.
+        return httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
+#pragma warning restore CS8603 // Possible null reference return.
+    }
+
+    public string GetEmail()
+    {
+#pragma warning disable CS8603 // Possible null reference return.
+        return httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.Email);
+#pragma warning restore CS8603 // Possible null reference return.
+    }
+
+    public string GetUsername()
+    {
+#pragma warning disable CS8603 // Possible null reference return.
+        return httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.Name);
+#pragma warning restore CS8603 // Possible null reference return.
+    }
+}
+
+
+// File: Web\Shared\ApiResponse.cs
+--------------------------------------------------------------------------------
+using ActivityGameBackend.Application.Exceptions;
+
+namespace ActivityGameBackend.Web.Shared;
+
+public class ApiResponse
+{
+    public bool Success { get; init; } = true;
+    public string Message { get; init; } = "Operation completed successfully";
+    public ErrorCode? ErrorCode { get; init; }
+}
+
+public class ApiResponse<T> : ApiResponse
+{
+    public T? Data { get; init; }
+}
+
+

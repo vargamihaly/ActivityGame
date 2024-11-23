@@ -1,7 +1,9 @@
+using ActivityGameBackend.Application.Chat;
 using ActivityGameBackend.Application.Games;
 using ActivityGameBackend.Application.Statistics;
 using ActivityGameBackend.Application.Users;
 using ActivityGameBackend.Web.Controllers.Game.Response;
+using ActivityGameBackend.Web.Controllers.Sse.Response;
 using ActivityGameBackend.Web.Controllers.Statistics.Response;
 using AutoMapper;
 
@@ -54,5 +56,7 @@ public sealed class DtoMappingProfiles : Profile
         CreateMap<PlayerRanking, PlayerRankingResponse>()
             .ForMember(dest => dest.Username, opt => opt.MapFrom(src => src.Username))
             .ForMember(dest => dest.TotalScore, opt => opt.MapFrom(src => src.TotalScore));
+
+        CreateMap<ChatMessage, ChatMessageResponse>();
     }
 }

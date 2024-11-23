@@ -1,4 +1,5 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using ActivityGameBackend.Persistence.Mssql.Chat;
+using System.Diagnostics.CodeAnalysis;
 
 namespace ActivityGameBackend.Persistence.Mssql.Games;
 
@@ -20,6 +21,9 @@ public sealed class GameEntity
     public int TimerInMinutes { get; set; }
     public int MaxScore { get; set; }
     public List<MethodType> EnabledMethods { get; set; } = new();
+    
+    public ICollection<ChatMessageEntity> ChatMessages { get; set; } = new List<ChatMessageEntity>();
+
     public DateTimeOffset CreatedAtUtc { get; init; }
 
     public override string? ToString()
