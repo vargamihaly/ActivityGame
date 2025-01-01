@@ -2,18 +2,17 @@ import React, {useCallback, useEffect, useState} from 'react';
 import {useParams, useNavigate} from 'react-router-dom';
 import {useAuth} from '@/context/AuthContext';
 import {useGame} from '@/context/GameContext';
-import {useStartGame, useLeaveLobby} from "@/hooks/gameHooks";
 import UpdateSettingsForm from "../forms/updateSettings/UpdateSettingsForm";
 import {Button} from "@/components/ui/button";
 import {Card, CardContent, CardHeader, CardTitle} from "@/components/ui/card";
 import {Avatar, AvatarFallback} from "@/components/ui/avatar";
 import {Badge} from "@/components/ui/badge";
 import {Collapsible, CollapsibleContent, CollapsibleTrigger} from "@/components/ui/collapsible";
-import {Loader2, Settings, Star, LogOut} from 'lucide-react';
+import {Loader2, Settings, Star, LogOut, Copy} from 'lucide-react';
 import {useToast} from "@/hooks/use-toast";
-import {Copy} from 'lucide-react';
 import useSSE from '@/hooks/useSSE';
 import {components} from "@/api/activitygame-schema";
+import {useGameHook} from "@/hooks/gameHooks";
 
 type PlayerResponse = components['schemas']['PlayerResponse'];
 
@@ -22,10 +21,13 @@ const Lobby: React.FC = () => {
     const {user, setHostStatus} = useAuth();
     const [showSettings, setShowSettings] = useState(false);
     const {toast} = useToast();
-    const startGameMutation = useStartGame();
-    const leaveLobbyMutation = useLeaveLobby();
-    const {currentGame, setCurrentGame, setIsInGame, refreshGameDetails} = useGame();
     const navigate = useNavigate();
+
+    // Using the new refactored hook:
+    const { useGameDetails, startGame, leaveLobby } = useGameHook();
+    const { currentGame, setCurrentGame, setIsInGame, refreshGameDetails } = useGame();
+
+    const { data: gameDetails, isLoading, error: gameDetailsError } = useGameDetails(gameId);
 
     const onGameStarted = useCallback(() => {
         toast({
@@ -34,7 +36,6 @@ const Lobby: React.FC = () => {
         });
         navigate(`/game/${gameId}`);
     }, [toast, navigate, gameId]);
-
 
     const onGameSettingsUpdated = useCallback(async () => {
         await refreshGameDetails();
@@ -61,10 +62,8 @@ const Lobby: React.FC = () => {
                 //If this user was the host, remove his host status
                 setHostStatus(false);
 
-
                 let isLastUserLeaving = currentGame?.players && currentGame.players.length === 0;
                 if (isLastUserLeaving) {
-                    // Handle game cancellation
                     toast({
                         title: "Game Cancelled",
                         description: "The game has been cancelled as there are no players left.",
@@ -77,9 +76,7 @@ const Lobby: React.FC = () => {
                 }
 
                 navigate('/');
-
             } else {
-                // Another player left
                 toast({
                     title: "Player Left",
                     description: "A player has left the lobby.",
@@ -87,7 +84,6 @@ const Lobby: React.FC = () => {
             }
 
             if (currentGame?.players && currentGame.players.length === 0) {
-                // Handle game cancellation
                 toast({
                     title: "Game Cancelled",
                     description: "The game has been cancelled as there are no players left.",
@@ -132,8 +128,8 @@ const Lobby: React.FC = () => {
         }
 
         try {
-            await startGameMutation.mutateAsync(gameId);
-            // The navigation to the game page will be handled by the SSE event
+            await startGame.mutateAsync(gameId);
+            // Navigation will occur via SSE event onGameStarted
         } catch (error) {
             toast({
                 title: "Error",
@@ -147,18 +143,14 @@ const Lobby: React.FC = () => {
         if (!gameId) return;
 
         try {
-            // leave lobby
-            await leaveLobbyMutation.mutateAsync(gameId);
+            await leaveLobby.mutateAsync(gameId);
             toast({
                 title: "Leaving game",
                 description: "Waiting for server confirmation...",
             });
 
-            // Clear game context
             setCurrentGame(null);
             setIsInGame(false);
-
-            // Finally navigate
             navigate('/');
         } catch (error) {
             toast({
@@ -188,16 +180,25 @@ const Lobby: React.FC = () => {
         }
     };
 
-    if (!currentGame) {
+    if (isLoading) {
+        return (
+            <div className="flex justify-center items-center h-screen">
+                <Loader2 className="h-12 w-12 animate-spin text-primary" />
+            </div>
+        );
+    }
+
+    if (gameDetailsError || !gameDetails) {
         return <div>Error loading game details</div>;
     }
 
-    const isHost = currentGame.hostId === user?.id;
-    const players = currentGame.players || [];
-    console.log('players:', players);
-    if (currentGame.hostId && !players.some(p => p.id === currentGame.hostId)) {
-        // players.unshift(currentGame.hostId);
+    // Update currentGame with latest data
+    if (currentGame !== gameDetails) {
+        setCurrentGame(gameDetails);
     }
+
+    const isHost = gameDetails.hostId === user?.id;
+    const players = gameDetails.players || [];
 
     return (
         <div className="container mx-auto p-4">
@@ -263,9 +264,9 @@ const Lobby: React.FC = () => {
                             <CollapsibleContent className="mt-4">
                                 <UpdateSettingsForm
                                     gameId={gameId!}
-                                    timer={currentGame.timerInMinutes || 1}
-                                    maxScore={currentGame.maxScore || 1}
-                                    enabledMethods={currentGame.enabledMethods || []}
+                                    timer={gameDetails.timerInMinutes || 1}
+                                    maxScore={gameDetails.maxScore || 1}
+                                    enabledMethods={gameDetails.enabledMethods || []}
                                     onSuccess={async () => {
                                         await refreshGameDetails();
                                         toast({
@@ -283,18 +284,18 @@ const Lobby: React.FC = () => {
                                 <Button
                                     onClick={handleStartGame}
                                     className="w-full"
-                                    disabled={startGameMutation.isPending || players.length < 2}
+                                    disabled={startGame.isPending || players.length < 2}
                                 >
-                                    {startGameMutation.isPending ? 'Starting...' : 'Start Game'}
+                                    {startGame.isPending ? 'Starting...' : 'Start Game'}
                                 </Button>
                                 <Button
                                     onClick={handleLeaveLobby}
                                     className="w-full mt-4"
-                                    disabled={leaveLobbyMutation.isPending}
+                                    disabled={leaveLobby.isPending}
                                     variant="destructive"
                                 >
                                     <LogOut className="mr-2 h-4 w-4"/>
-                                    {leaveLobbyMutation.isPending ? 'Leaving...' : 'Leave Lobby'}
+                                    {leaveLobby.isPending ? 'Leaving...' : 'Leave Lobby'}
                                 </Button>
                                 {players.length < 2 && (
                                     <p className="text-sm text-red-500 mt-2">
@@ -308,11 +309,11 @@ const Lobby: React.FC = () => {
                             <Button
                                 onClick={handleLeaveLobby}
                                 className="w-full"
-                                disabled={leaveLobbyMutation.isPending}
+                                disabled={leaveLobby.isPending}
                                 variant="destructive"
                             >
                                 <LogOut className="mr-2 h-4 w-4"/>
-                                {leaveLobbyMutation.isPending ? 'Leaving...' : 'Leave Lobby'}
+                                {leaveLobby.isPending ? 'Leaving...' : 'Leave Lobby'}
                             </Button>
                         )}
                     </div>

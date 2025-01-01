@@ -1,13 +1,8 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query';
 import {useToast} from "@/hooks/use-toast";
 import {components} from "@/api/activitygame-schema";
-
 import {AxiosError} from "axios";
 import {
-    getMeAsync,
-    getCurrentGameAsync,
-    postLogoutAsync,
-    postUsernameAsync,
     getGameDetailsAsync,
     postCreateGameAsync,
     postEndTurnAsync,
@@ -18,8 +13,6 @@ import {
     getGlobalStatisticsAsync,
     postTimeUpAsync, updateGameSettingsAsync
 } from "@/api/games-api";
-import {useGame} from "@/context/GameContext";
-
 
 const errorMessageTitle = "An error occurred";
 
@@ -27,265 +20,174 @@ type CreateGameResponseApiResponse = components["schemas"]["CreateGameResponseAp
 type UpdateGameSettingsRequest = components["schemas"]["UpdateGameSettingsRequest"];
 type ApiResponse = components["schemas"]["ApiResponse"];
 type StartGameResponseApiResponse = components["schemas"]["StartGameResponseApiResponse"];
-type GetGameResponseApiResponse = components["schemas"]["GameResponseApiResponse"];
 type GetGameResponse = components["schemas"]["GameResponse"];
 type EndTurnResponseApiResponse = components["schemas"]["EndTurnResponseApiResponse"];
 type EndTurnRequest = components["schemas"]["EndTurnRequest"];
-type UserResponseApiResponse = components["schemas"]["UserResponseApiResponse"];
-type UserResponse = components["schemas"]["UserResponse"];
-type SetUsernameRequest = components["schemas"]["SetUsernameRequest"];
 type GlobalStatisticsResponse = components["schemas"]["GetGlobalStatisticsResponse"];
 type UserStatisticsResponse = components["schemas"]["GetUserStatisticsResponse"];
 
 
-export const useCreateGame = () => {
+export const useGameHook = () => {
     const queryClient = useQueryClient();
-    const {toast} = useToast();
+    const { toast } = useToast();
 
-    return useMutation<CreateGameResponseApiResponse, AxiosError<ApiResponse>, void>({
+    // Game Create Mutation
+    const createGame = useMutation<CreateGameResponseApiResponse, AxiosError<ApiResponse>, void>({
         mutationFn: postCreateGameAsync,
         onSuccess: async (response) => {
-            if (response.success) {
-                const gameId = response.data?.gameId;
-                if (gameId) {
-                    await queryClient.invalidateQueries({
-                        queryKey: ['games', gameId]
-                    });
-                }
+            if (response.success && response.data?.gameId) {
+                await queryClient.invalidateQueries({ queryKey: ['games', response.data.gameId] });
                 console.log('Game created successfully', response.data);
             }
         },
         onError: (error) => {
-            console.error('Error creating game:', error);
-            const errorMessage = error.response?.data?.message || error.message || "An unexpected error occurred. Please try again.";
+            const errorMessage = error.response?.data?.message || "Failed to create game";
             toast({
-                title: "An Error Occurred",
+                title: "Game Creation Error",
                 description: errorMessage,
                 variant: "destructive"
             });
         }
     });
-};
 
-export const useUpdateSettings = () => {
-    const queryClient = useQueryClient();
-    const {toast} = useToast();
-
-    return useMutation<ApiResponse, AxiosError<ApiResponse>, { gameId: string; request: UpdateGameSettingsRequest }>({
-        mutationFn: async ({gameId, request}) => updateGameSettingsAsync(gameId, request),
-        onSuccess: async (_, {gameId}) => {
-            await queryClient.invalidateQueries({
-                queryKey: ['games', gameId]
-            });
-        },
-        onError: (error) => {
-            const errorMessage = error.response?.data?.message || error.message || "An unexpected error occurred.";
-            toast({title: "Error", description: errorMessage, variant: "destructive"});
-        }
-    });
-};
-
-export const useLeaveLobby = () => {
-    const queryClient = useQueryClient();
-    const {toast} = useToast();
-
-    return useMutation<ApiResponse, AxiosError<ApiResponse>, string>({
-        mutationFn: postLeaveLobbyAsync,
-        onSuccess: async (response, gameId) => {
-            await queryClient.invalidateQueries({
-                queryKey: ['games', gameId]
-            });
-            console.log('Left lobby successfully', response);
-        },
-        onError: (error) => {
-            const errorMessage = error.response?.data?.message || error.message || "An unexpected error occurred while leaving the lobby.";
-            toast({
-                title: "Error Leaving Lobby",
-                description: errorMessage,
-                variant: "destructive"
-            });
-        }
-    });
-};
-
-export const useJoinGame = () => {
-    const queryClient = useQueryClient();
-    const {toast} = useToast();
-
-    return useMutation<ApiResponse, AxiosError<ApiResponse>, string>({
+    // Game Join Mutation
+    const joinGame = useMutation<ApiResponse, AxiosError<ApiResponse>, string>({
         mutationFn: postJoinGameAsync,
         onSuccess: async (response, gameId) => {
-            await queryClient.invalidateQueries({
-                queryKey: ['games', gameId]
-            });
+            await queryClient.invalidateQueries({ queryKey: ['games', gameId] });
             console.log('Joined game successfully', response);
         },
         onError: (error) => {
-            const errorMessage = error.response?.data?.message || error.message || "An unexpected error occurred while joining the game.";
+            const errorMessage = error.response?.data?.message || "Failed to join game";
             toast({
-                title: "Error Joining Game",
+                title: "Game Join Error",
                 description: errorMessage,
                 variant: "destructive"
             });
         }
     });
-};
 
-export const useLogout = () => {
-    const queryClient = useQueryClient();
-    const {toast} = useToast();
-
-    return useMutation<ApiResponse, AxiosError<ApiResponse>, void>({
-        mutationFn: postLogoutAsync,
-        onSuccess: async () => {
-            // Clear all queries when logging out
-            await queryClient.clear();
+    // Leave Lobby Mutation
+    const leaveLobby = useMutation<ApiResponse, AxiosError<ApiResponse>, string>({
+        mutationFn: postLeaveLobbyAsync,
+        onSuccess: async (response, gameId) => {
+            await queryClient.invalidateQueries({ queryKey: ['games', gameId] });
+            console.log('Left lobby successfully', response);
         },
         onError: (error) => {
-            const errorMessage = error.response?.data?.message || error.message || "An unexpected error occurred while logging out.";
+            const errorMessage = error.response?.data?.message || "Failed to leave lobby";
             toast({
-                title: "Logout Error",
+                title: "Leave Lobby Error",
                 description: errorMessage,
                 variant: "destructive"
             });
         }
     });
-};
 
-export const useGetMe = (options = {}) => {
-    const {toast} = useToast();
-
-    return useQuery<UserResponse, AxiosError<ApiResponse>>({
-        queryKey: ['me'],
-        queryFn: async (): Promise<UserResponse> => {
-
-            const response = await getMeAsync();
-
-            if (!response.data) {
-                const errorMessage = response.message || "Failed to fetch user details.";
-                toast({title: errorMessageTitle, description: errorMessage});
-                throw new Error(errorMessage);
-            }
-
-            return response.data;
-        },
-        ...options,
-    });
-};
-
-export const useSetUsername = () => {
-    const queryClient = useQueryClient();
-    const {toast} = useToast();
-
-    return useMutation<UserResponseApiResponse, AxiosError<ApiResponse>, SetUsernameRequest>({
-        mutationFn: postUsernameAsync,
-        onSuccess: async () => {
-            await queryClient.invalidateQueries({queryKey: ['me']});
-        },
-        onError: (error) => {
-            const errorMessage = error.response?.data?.message || error.message || "Failed to update username.";
-            toast({
-                title: "Error",
-                description: errorMessage,
-                variant: "destructive"
-            });
-        }
-    });
-};
-
-export const useCurrentGame = (options = {}) => {
-    const {toast} = useToast();
-    const {currentGame, setCurrentGame, setIsInGame} = useGame();
-    const currentGameId = currentGame?.id;
-    return useQuery<GetGameResponse, AxiosError<ApiResponse>>({
-        queryKey: ['currentGame'],
-        queryFn: async (): Promise<GetGameResponse> => {
-            if (!currentGameId) {
-                throw new Error('Game ID is required');
-            }
-
-            const response = await getCurrentGameAsync();
-
-            if (!response.data) {
-                const errorMessage = response.message || "Game details not found";
-                toast({title: errorMessageTitle, description: errorMessage});
-                throw new Error(errorMessage);
-            }
-
-            return response.data;
-        },
-        ...options,
-    });
-};
-
-//Should not be called directly for state manage the CURRENT game, use GameContext instead
-export const useGameDetails = (gameId?: string, options = {}) => {
-    const {toast} = useToast();
-
-    return useQuery<GetGameResponse, AxiosError<ApiResponse>>({
-        queryKey: ['games', gameId],
-        queryFn: async (): Promise<GetGameResponse> => {
-            if (!gameId) {
-                throw new Error('Game ID is required');
-            }
-
-            const response = await getGameDetailsAsync(gameId);
-
-            if (!response.data) {
-                const errorMessage = response.message || "Game details not found";
-                toast({title: errorMessageTitle, description: errorMessage});
-                throw new Error(errorMessage);
-            }
-
-            return response.data;
-        },
-        ...options,
-    });
-};
-
-export const useStartGame = () => {
-    const queryClient = useQueryClient();
-    const {toast} = useToast();
-
-    return useMutation<StartGameResponseApiResponse, AxiosError<ApiResponse>, string>({
+    // Start Game Mutation
+    const startGame = useMutation<StartGameResponseApiResponse, AxiosError<ApiResponse>, string>({
         mutationFn: postStartGameAsync,
         onSuccess: async (_, gameId) => {
-            await queryClient.invalidateQueries({
-                queryKey: ['games', gameId]
-            });
+            await queryClient.invalidateQueries({ queryKey: ['games', gameId] });
+            console.log('Game started successfully');
         },
         onError: (error) => {
-            const errorMessage = error.response?.data?.message || error.message || "An unexpected error occurred.";
-            toast({title: errorMessageTitle, description: errorMessage});
-            throw error;
+            const errorMessage = error.response?.data?.message || "Failed to start game";
+            toast({
+                title: "Game Start Error",
+                description: errorMessage,
+                variant: "destructive"
+            });
         }
     });
-};
 
-
-export const useEndTurn = () => {
-    const queryClient = useQueryClient();
-    const {toast} = useToast();
-
-    return useMutation<EndTurnResponseApiResponse, AxiosError<ApiResponse>, {
+    // End Turn Mutation
+    const endTurn = useMutation<EndTurnResponseApiResponse, AxiosError<ApiResponse>, {
         gameId: string;
         request: EndTurnRequest
     }>({
         mutationFn: async ({gameId, request}) => postEndTurnAsync(gameId, request),
         onSuccess: async (_, {gameId}) => {
-            await queryClient.invalidateQueries({
-                queryKey: ['games', gameId],
-            });
+            await queryClient.invalidateQueries({ queryKey: ['games', gameId] });
         },
         onError: (error) => {
-            const errorMessage = error.response?.data?.message || error.message || "An unexpected error occurred.";
-            toast({title: errorMessageTitle, description: errorMessage});
-            throw error;
-        },
+            const errorMessage = error.response?.data?.message || "Failed to end turn";
+            toast({
+                title: "End Turn Error",
+                description: errorMessage,
+                variant: "destructive"
+            });
+        }
     });
-};
 
-export const useGlobalStatistics = (options = {}) => {
+
+    // Update Game Settings Mutation
+    const updateSettings = useMutation<ApiResponse, AxiosError<ApiResponse>, {
+        gameId: string;
+        request: UpdateGameSettingsRequest
+    }>({
+        mutationFn: async ({gameId, request}) => updateGameSettingsAsync(gameId, request),
+        onSuccess: async (_, {gameId}) => {
+            await queryClient.invalidateQueries({ queryKey: ['games', gameId] });
+        },
+        onError: (error) => {
+            const errorMessage = error.response?.data?.message || "Failed to update settings";
+            toast({
+                title: "Update Settings Error",
+                description: errorMessage,
+                variant: "destructive"
+            });
+        }
+    });
+
+    // Time Up Mutation
+    const timeUp = useMutation<ApiResponse, AxiosError<ApiResponse>, string>({
+        mutationFn: postTimeUpAsync,
+        onSuccess: async (_, gameId) => {
+            await queryClient.invalidateQueries({ queryKey: ['games', gameId] });
+            console.log('Time up handled successfully');
+        },
+        onError: (error) => {
+            const errorMessage = error.response?.data?.message || "Failed to handle time up";
+            toast({
+                title: "Time Up Error",
+                description: errorMessage,
+                variant: "destructive"
+            });
+        }
+    });
+
+    // Query hooks are kept as they were
+    const useGameDetails = (gameId?: string, options = {}) => {
+        return useQuery<GetGameResponse, AxiosError<ApiResponse>>({
+            queryKey: ['games', gameId],
+            queryFn: async (): Promise<GetGameResponse> => {
+                if (!gameId) throw new Error('Game ID is required');
+                const response = await getGameDetailsAsync(gameId);
+                if (!response.data) throw new Error(response.message || "Game details not found");
+                return response.data;
+            },
+            ...options,
+        });
+    };
+
+    // Return all mutations and query functions
+    return {
+        // Mutations
+        createGame,
+        joinGame,
+        leaveLobby,
+        startGame,
+        endTurn,
+        updateSettings,
+        timeUp,
+
+        // Queries
+        useGameDetails,
+    };
+};
+    
+    export const useGlobalStatistics = (options = {}) => {
     const { toast } = useToast();
 
     return useQuery<GlobalStatisticsResponse, AxiosError<ApiResponse>>({
@@ -322,29 +224,5 @@ export const useUserStatistics = (options = {}) => {
             return response.data;
         },
         ...options,
-    });
-};
-
-export const useTimeUp = () => {
-    const queryClient = useQueryClient();
-    const {toast} = useToast();
-
-    return useMutation<ApiResponse, AxiosError<ApiResponse>, string>({
-        mutationFn: postTimeUpAsync,
-        onSuccess: async (_, gameId) => {
-            await queryClient.invalidateQueries({
-                queryKey: ['games', gameId]
-            });
-            console.log('Time up handled successfully');
-        },
-        onError: (error) => {
-            const errorMessage = error.response?.data?.message || error.message || "An unexpected error occurred while handling time up.";
-            toast({
-                title: errorMessageTitle,
-                description: errorMessage,
-                variant: "destructive"
-            });
-            throw error;
-        }
     });
 };

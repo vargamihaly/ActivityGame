@@ -11,7 +11,6 @@ ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 COPY ["Directory.Build.props", "."]
 COPY ["Web/Web.csproj", "Web/"]
-COPY ["Adapter.UserManagerAdapter/Adapter.UserManagerAdapter.csproj", "Adapter.UserManagerAdapter/"]
 COPY ["Application/Application.csproj", "Application/"]
 COPY ["Common.Core/Common.Core.csproj", "Common.Core/"]
 COPY ["Persistence.Mssql/Persistence.Mssql.csproj", "Persistence.Mssql/"]

@@ -3,12 +3,12 @@ import { Formik, Form, useFormikContext } from 'formik';
 import * as Yup from 'yup';
 import { Box, Button } from '@mui/material';
 import { useToast } from '@/hooks/use-toast';
-import { useUpdateSettings } from '@/hooks/gameHooks';
 import MaxScoreField from './MaxScoreField';
 import MethodSelection from './MethodSelection';
 import TimerField from "@/components/forms/updateSettings/TimerField";
 import { components } from "@/api/activitygame-schema";
-import {METHOD_TYPE} from "@/interfaces/GameTypes";
+import { METHOD_TYPE } from "@/interfaces/GameTypes";
+import {useGameHook} from "@/hooks/gameHooks";
 
 type MethodType = components['schemas']['MethodType'];
 
@@ -61,7 +61,7 @@ const UpdateSettingsForm: React.FC<UpdateSettingsFormProps> = ({
                                                                    onSuccess,
                                                                    isDisabled = false,
                                                                }) => {
-    const updateSettingsMutation = useUpdateSettings();
+    const { updateSettings } = useGameHook();
     const { toast } = useToast();
 
     return (
@@ -82,7 +82,7 @@ const UpdateSettingsForm: React.FC<UpdateSettingsFormProps> = ({
                 };
 
                 try {
-                    await updateSettingsMutation.mutateAsync({ gameId, request: requestPayload });
+                    await updateSettings.mutateAsync({ gameId, request: requestPayload });
                     onSuccess();
                     toast({
                         title: 'Success',

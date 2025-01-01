@@ -682,6 +682,7 @@ components:
     RoundResponse:
       required:
         - activePlayerUsername
+        - createdAtUtc
         - methodType
         - word
       type: object
@@ -697,6 +698,9 @@ components:
         activePlayerUsername:
           type: string
           nullable: true
+        createdAtUtc:
+          type: string
+          format: date-time
       additionalProperties: false
     SetUsernameRequest:
       required:

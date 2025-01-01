@@ -1,44 +1,28 @@
 // src/components/Main/Main.tsx
-import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '@/context/AuthContext';
-import { useCreateGame, useJoinGame, useLeaveLobby } from "@/hooks/gameHooks";
-import { useToast } from "@/hooks/use-toast";
-import { useGame } from "@/context/GameContext";
-import { Trophy, Users, Play, LogIn, ArrowRight } from 'lucide-react';
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { GAME_STATUS } from "@/interfaces/GameTypes";
-import { isValidGuid } from '@/lib/guidUtils';
-import { Statistics } from "@/components/Statistics/Statistics";
+import React, {useEffect, useState} from 'react';
+import {useNavigate} from 'react-router-dom';
+import {useAuth} from '@/context/AuthContext';
+import {useGameHook} from "@/hooks/gameHooks";
+import {useToast} from "@/hooks/use-toast";
+import {useGame} from "@/context/GameContext";
+import {Trophy, Users, Play, LogIn, ArrowRight} from 'lucide-react';
+import {Button} from "@/components/ui/button";
+import {Card, CardContent, CardHeader, CardTitle} from "@/components/ui/card";
+import {GAME_STATUS} from "@/interfaces/GameTypes";
+import {isValidGuid} from '@/lib/guidUtils';
+import {Statistics} from "@/components/Statistics/Statistics";
 import JoinGameDialog from "@/components/Main/JoinGameDialog";
 import UserLoading from "@/components/Main/UserLoading";
 
 const Main: React.FC = () => {
     const navigate = useNavigate();
-    const { user } = useAuth();
+    const {user} = useAuth();
     const [joinGameId, setJoinGameId] = useState('');
     const [isJoinDialogOpen, setIsJoinDialogOpen] = useState(false);
-    const { currentGame, isInGame, refreshGameDetails } = useGame();
-    const { toast } = useToast();
+    const {currentGame, isInGame, refreshGameDetails} = useGame();
+    const {toast} = useToast();
 
-    const createGameMutation = useCreateGame();
-    const joinGameMutation = useJoinGame();
-    const leaveLobbyMutation = useLeaveLobby();
-
-    const handleLeaveLobby = async (gameId: string) => {
-        try {
-            await leaveLobbyMutation.mutateAsync(gameId);
-            console.log('Left lobby successfully');
-        } catch (error) {
-            console.error('Error leaving lobby:', error);
-            toast({
-                title: "Error",
-                description: "Failed to leave current lobby",
-                variant: "destructive",
-            });
-        }
-    };
+    const {createGame, joinGame, leaveLobby} = useGameHook();
 
     const confirmLobbyAction = async (): Promise<boolean> => {
         if (!isInGame || !currentGame || currentGame.status !== GAME_STATUS.Waiting) {
@@ -56,6 +40,15 @@ const Main: React.FC = () => {
         return confirmed;
     };
 
+    const handleLeaveLobby = async (gameId: string) => {
+        try {
+            await leaveLobby.mutateAsync(gameId);
+            console.log('Left lobby successfully');
+        } catch (error) {
+            console.error('Error leaving lobby:', error);
+        }
+    };
+
     const handleCreateGame = async () => {
         if (isInGame && currentGame?.status === GAME_STATUS.InProgress) {
             toast({
@@ -66,24 +59,13 @@ const Main: React.FC = () => {
             return;
         }
 
-        if (!(await confirmLobbyAction())) {
-            return;
-        }
-
-        createGameMutation.mutate(undefined, {
+        createGame.mutate(undefined, {
             onSuccess: async (response) => {
                 const gameId = response.data?.gameId;
                 if (gameId) {
                     await refreshGameDetails();
                     navigate(`/lobby/${gameId}`);
                 }
-            },
-            onError: () => {
-                toast({
-                    title: "Error",
-                    description: "Failed to create game",
-                    variant: "destructive",
-                });
             }
         });
     };
@@ -98,30 +80,10 @@ const Main: React.FC = () => {
             return;
         }
 
-        if (isInGame && currentGame?.status === GAME_STATUS.InProgress) {
-            toast({
-                title: "Active Game in Progress",
-                description: "Please finish or leave your current game first.",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        if (!(await confirmLobbyAction())) {
-            return;
-        }
-
-        joinGameMutation.mutate(joinGameId, {
+        joinGame.mutate(joinGameId, {
             onSuccess: async () => {
                 await refreshGameDetails();
                 navigate(`/lobby/${joinGameId}`);
-            },
-            onError: () => {
-                toast({
-                    title: "Error",
-                    description: "Failed to join game",
-                    variant: "destructive",
-                });
             }
         });
     };
@@ -135,7 +97,7 @@ const Main: React.FC = () => {
         navigate(path);
     };
 
-    if (!user) return <UserLoading />;
+    if (!user) return <UserLoading/>;
 
     return (
         <div className="max-w-6xl mx-auto p-6 space-y-8">
@@ -164,7 +126,7 @@ const Main: React.FC = () => {
                                 className="bg-blue-600 hover:bg-blue-700"
                             >
                                 Return to Game
-                                <ArrowRight className="ml-2 h-4 w-4" />
+                                <ArrowRight className="ml-2 h-4 w-4"/>
                             </Button>
                         </div>
                     </CardContent>
@@ -173,7 +135,7 @@ const Main: React.FC = () => {
 
             {/* Statistics Section */}
             <div className="mb-8">
-                <Statistics />
+                <Statistics/>
             </div>
 
             {/* Game Actions */}
@@ -183,7 +145,7 @@ const Main: React.FC = () => {
                         <div className="space-y-4">
                             <div className="flex items-center space-x-3">
                                 <div className="p-2 bg-blue-100 rounded-lg">
-                                    <Play className="w-6 h-6 text-blue-600" />
+                                    <Play className="w-6 h-6 text-blue-600"/>
                                 </div>
                                 <h3 className="text-xl font-semibold">Create New Game</h3>
                             </div>
@@ -191,7 +153,7 @@ const Main: React.FC = () => {
                             <Button
                                 onClick={handleCreateGame}
                                 className="w-full"
-                                disabled={isInGame && currentGame?.status === GAME_STATUS.InProgress || createGameMutation.isPending}
+                                disabled={isInGame && currentGame?.status === GAME_STATUS.InProgress || createGame.isPending}
                             >
                                 Create Game
                             </Button>
@@ -204,7 +166,7 @@ const Main: React.FC = () => {
                         <div className="space-y-4">
                             <div className="flex items-center space-x-3">
                                 <div className="p-2 bg-green-100 rounded-lg">
-                                    <Users className="w-6 h-6 text-green-600" />
+                                    <Users className="w-6 h-6 text-green-600"/>
                                 </div>
                                 <h3 className="text-xl font-semibold">Join Existing Lobby</h3>
                             </div>
@@ -227,7 +189,7 @@ const Main: React.FC = () => {
                 onOpenChange={setIsJoinDialogOpen}
                 onJoinGameIdChange={setJoinGameId}
                 onJoinGame={handleJoinGame}
-                isJoining={joinGameMutation.isPending}
+                isJoining={joinGame.isPending}
             />
         </div>
     );

@@ -1,19 +1,18 @@
 import React from 'react';
 import { useParams } from 'react-router-dom';
-import { useGameDetails } from "@/hooks/gameHooks";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Trophy, Clock, Target } from 'lucide-react';
-import {METHOD_TYPE} from "@/interfaces/GameTypes";
-import {useAuth} from "@/context/AuthContext";
-
+import { METHOD_TYPE } from "@/interfaces/GameTypes";
+import { useAuth } from "@/context/AuthContext";
+import {useGameHook} from "@/hooks/gameHooks";
 
 const GameStats: React.FC = () => {
     const { gameId } = useParams<{ gameId: string }>();
-    const { data: gameDetails, isLoading, error } = useGameDetails(gameId!);
+    const { useGameDetails } = useGameHook();
+    const { data: gameDetails, isLoading, error } = useGameDetails(gameId);
     const { user } = useAuth();
-    
 
     if (isLoading) {
         return (

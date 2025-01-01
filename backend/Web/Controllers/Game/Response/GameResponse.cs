@@ -28,4 +28,5 @@ public sealed record RoundResponse
     required public MethodType MethodType { get; init; }
     required public string Word { get; init; } = string.Empty;
     required public string ActivePlayerUsername { get; init; }
+    required public DateTimeOffset CreatedAtUtc { get; init; }
 }

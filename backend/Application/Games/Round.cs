@@ -8,4 +8,5 @@ public sealed record Round
     public required MethodType MethodType { get; init; }
     public required Word Word { get; init; }
     public required User ActivePlayer { get; init; }
+    public DateTimeOffset CreatedAtUtc { get; set; }
 }

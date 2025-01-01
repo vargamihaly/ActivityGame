@@ -2,7 +2,6 @@ import React, {useCallback, useEffect, useState} from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useGame } from '@/context/GameContext';
-import {useEndTurn, useGameDetails, useTimeUp} from '@/hooks/gameHooks';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2, MessageCircle } from 'lucide-react';
@@ -14,6 +13,7 @@ import WinnerSelection from './WinnerSelection';
 import TimerDisplay from './TimerDisplay';
 import Leaderboard from './Leaderboard';
 import ChatBox from './ChatBox';
+import {useGameHook} from "@/hooks/gameHooks";
 
 const Game: React.FC = () => {
     const { gameId } = useParams<{ gameId: string }>();
@@ -21,22 +21,19 @@ const Game: React.FC = () => {
     const navigate = useNavigate();
     const { currentGame, setCurrentGame, setIsInGame } = useGame();
     const { toast } = useToast();
-    const endTurnMutation = useEndTurn();
-    const timeUpMutation = useTimeUp();
+
+    const { endTurn, timeUp, useGameDetails } = useGameHook();
     const { data: gameDetails, refetch: reFetchGameDetails } = useGameDetails(gameId);
     const [selectedWinnerId, setSelectedWinnerId] = useState<string>('');
 
-    // Function to refresh game details
     const refreshGameDetails = useCallback(async () => {
         await reFetchGameDetails();
     }, [reFetchGameDetails]);
 
-    // const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-    
-    
-    // Initialize the game timer
+    // Initialize the timer with initialTime = 0,
+    // We'll dynamically reset it after we get the game details.
     const { timeLeft, progress, startTimer, resetTimer } = useGameTimer({
-        initialTime: currentGame?.timerInMinutes ? currentGame.timerInMinutes * 60 : 0,
+        initialTime: 0,
         onTimeUp: async () => {
             if (isActivePlayer) {
                 try {
@@ -61,7 +58,7 @@ const Game: React.FC = () => {
         if (!gameId) return;
 
         try {
-            await timeUpMutation.mutateAsync(gameId);
+            await timeUp.mutateAsync(gameId);
             await refreshGameDetails();
         } catch (error) {
             console.error('Error handling time up:', error);
@@ -69,7 +66,6 @@ const Game: React.FC = () => {
         }
     };
 
-    // Event handler when the game ends
     const onGameEnded = useCallback(() => {
         toast({
             title: 'Game Over',
@@ -87,30 +83,37 @@ const Game: React.FC = () => {
         refreshGameDetails();
     }, [resetTimer, refreshGameDetails]);
 
-    // Set up SSE to listen to server events
     const { isConnected, error: sseError } = useSSE(gameId, {
         onGameEnded,
         onTurnEnded,
         refreshGameDetails,
     });
 
-    // Fetch game details on component mount and when gameId changes
+    // Fetch game details on mount/gameId change
     useEffect(() => {
         if (gameId) {
+         
             reFetchGameDetails();
         }
     }, [gameId, reFetchGameDetails]);
 
-    // Update currentGame state and reset/start timer when gameDetails change
+    // Update currentGame state and timer when gameDetails change
     useEffect(() => {
         if (gameDetails) {
             setCurrentGame(gameDetails);
-            resetTimer(gameDetails.timerInMinutes * 60);
-            startTimer();
+console.log(gameDetails);
+            if (gameDetails.currentRound) {
+                const createdAt = new Date(gameDetails.currentRound.createdAtUtc);
+                const elapsedSeconds = Math.floor((Date.now() - createdAt.getTime()) / 1000);
+                const totalRoundSeconds = gameDetails.timerInMinutes * 60;
+                const calculatedTimeLeft = Math.max(totalRoundSeconds - elapsedSeconds, 0);
+
+                resetTimer(calculatedTimeLeft);
+                startTimer();
+            }
         }
     }, [gameDetails, setCurrentGame, resetTimer, startTimer]);
 
-    // Handle ending the turn
     const handleEndTurn = async () => {
         if (!selectedWinnerId || !gameId) {
             toast({
@@ -122,7 +125,7 @@ const Game: React.FC = () => {
         }
 
         try {
-            await endTurnMutation.mutateAsync({ gameId, request: { winnerUserId: selectedWinnerId } });
+            await endTurn.mutateAsync({ gameId, request: { winnerUserId: selectedWinnerId } });
             toast({
                 title: 'Success',
                 description: 'Turn ended successfully. New turn started!',
@@ -149,10 +152,6 @@ const Game: React.FC = () => {
 
     const currentRoundNumber = currentGame.currentRound?.roundNumber ?? 1;
     const isActivePlayer = user?.username === currentGame.currentRound?.activePlayerUsername;
-    console.log('currentGame:', currentGame);
-    console.log('isActivePlayer:', isActivePlayer);
-    console.log('userId:', user?.id);
-    console.log('activePlayerUsername:', currentGame.currentRound?.activePlayerUsername);
 
     return (
         <div className="container mx-auto p-4 max-w-6xl">
@@ -180,7 +179,7 @@ const Game: React.FC = () => {
                                 isActivePlayer={isActivePlayer}
                             />
 
-                            {/* Winner Selection section - Only shown when user is the active player */}
+                            {/* Winner Selection section */}
                             {isActivePlayer && (
                                 <div className="mt-6 border-t pt-6">
                                     {timeLeft > 0 ? (
@@ -190,13 +189,10 @@ const Game: React.FC = () => {
                                             selectedWinnerId={selectedWinnerId}
                                             onWinnerSelect={setSelectedWinnerId}
                                             onEndTurn={handleEndTurn}
-                                            isEndingTurn={endTurnMutation.isPending}
+                                            isEndingTurn={endTurn.isPending}
                                         />
                                     ) : (
-                                        <Button
-                                            onClick={handleTimeUp}
-                                            className="w-full"
-                                        >
+                                        <Button onClick={handleTimeUp} className="w-full">
                                             Start Next Round
                                         </Button>
                                     )}

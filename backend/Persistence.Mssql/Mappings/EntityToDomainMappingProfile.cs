@@ -36,7 +36,8 @@ public class EntityToDomainMappingProfile : Profile
             .ForMember(dest => dest.MethodType, opt => opt.MapFrom(src => src.MethodType))
             .ForMember(dest => dest.Word, opt => opt.MapFrom(src => src.Word))
             .ForMember(dest => dest.ActivePlayer, opt =>
-                opt.MapFrom(src => src.ActivePlayer));
+                opt.MapFrom(src => src.ActivePlayer))
+            .ForMember(dest => dest.CreatedAtUtc, opt => opt.MapFrom(src => src.CreatedAtUtc));
 
         // Game Entity -> Domain
         CreateMap<GameEntity, Game>()
