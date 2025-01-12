@@ -5,7 +5,7 @@ namespace ActivityGameBackend.Application.Games.Validation;
 public interface IGameValidator : IScoped
 {
     void ValidateGameState(Game game, GameStatus expectedStatus);
-    void ValidateGameSettings(Game game);
+    void ValidateGameSettings(int timerInMinutes, int maxScore, IEnumerable<User> players);
 }
 
 public class GameValidator : IGameValidator
@@ -19,18 +19,20 @@ public class GameValidator : IGameValidator
         }
     }
 
-    public void ValidateGameSettings(Game game)
+    public void ValidateGameSettings(int timerInMinutes, int maxScore, IEnumerable<User> players)
     {
-        ArgumentNullException.ThrowIfNull(game);
-        if (game.TimerInMinutes <= 1)
+        Console.WriteLine("Validating game settings");
+        Console.WriteLine($"Timer: {timerInMinutes}");
+        Console.WriteLine($"Max score: {maxScore}");    
+        if (timerInMinutes < 1)
         {
             throw new InvalidGameSettingsException("timer", 1);
         }
-        if (game.MaxScore <= 1)
+        if (maxScore <= 1)
         {
             throw new InvalidGameSettingsException("max score", 1);
         }
-        if (game.Players == null || !game.Players.Any())
+        if (players == null || !players.Any())
         {
             throw new InvalidPlayerCountException();
         }

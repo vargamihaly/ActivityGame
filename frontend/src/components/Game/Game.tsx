@@ -1,4 +1,3 @@
-import React, {useCallback, useEffect, useState} from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useGame } from '@/context/GameContext';
@@ -14,6 +13,7 @@ import TimerDisplay from './TimerDisplay';
 import Leaderboard from './Leaderboard';
 import ChatBox from './ChatBox';
 import {useGameHook} from "@/hooks/gameHooks";
+import {useCallback, useEffect, useState} from "react";
 
 const Game: React.FC = () => {
     const { gameId } = useParams<{ gameId: string }>();
@@ -35,22 +35,22 @@ const Game: React.FC = () => {
     const { timeLeft, progress, startTimer, resetTimer } = useGameTimer({
         initialTime: 0,
         onTimeUp: async () => {
-            if (isActivePlayer) {
-                try {
-                    await handleTimeUp();
-                    toast({
-                        title: "Time's up!",
-                        description: 'Starting next round...'
-                    });
-                } catch (error) {
-                    console.error('Error handling time up:', error);
-                    toast({
-                        title: 'Error',
-                        description: 'Failed to handle time up',
-                        variant: 'destructive'
-                    });
-                }
-            }
+            // if (isActivePlayer) {
+            //     try {
+            //         await handleTimeUp();
+            //         toast({
+            //             title: "Time's up!",
+            //             // description: 'Starting next round...'
+            //         });
+            //     } catch (error) {
+            //         console.error('Error handling time up:', error);
+            //         toast({
+            //             title: 'Error',
+            //             description: 'Failed to handle time up',
+            //             variant: 'destructive'
+            //         });
+            //     }
+            // }
         },
     });
 

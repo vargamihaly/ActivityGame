@@ -142,6 +142,76 @@ paths:
             text/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+  '/api/games/{gameId}/chat/messages':
+    post:
+      tags:
+        - Chat
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+          text/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+          application/*+json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ChatMessageResponseApiResponse'
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatMessageResponseApiResponse'
+            text/json:
+              schema:
+                $ref: '#/components/schemas/ChatMessageResponseApiResponse'
+        '400':
+          description: Bad Request
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+            text/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    get:
+      tags:
+        - Chat
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ChatMessageResponseListApiResponse'
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatMessageResponseListApiResponse'
+            text/json:
+              schema:
+                $ref: '#/components/schemas/ChatMessageResponseListApiResponse'
   '/api/GameEvents/{gameId}':
     get:
       tags:
@@ -457,6 +527,54 @@ components:
         errorCode:
           $ref: '#/components/schemas/ErrorCode'
       additionalProperties: false
+    ChatMessageResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        gameId:
+          type: string
+          format: uuid
+        senderId:
+          type: string
+          nullable: true
+        content:
+          type: string
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+      additionalProperties: false
+    ChatMessageResponseApiResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        errorCode:
+          $ref: '#/components/schemas/ErrorCode'
+        data:
+          $ref: '#/components/schemas/ChatMessageResponse'
+      additionalProperties: false
+    ChatMessageResponseListApiResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        errorCode:
+          $ref: '#/components/schemas/ErrorCode'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessageResponse'
+          nullable: true
+      additionalProperties: false
     CreateGameResponse:
       type: object
       properties:
@@ -701,6 +819,15 @@ components:
         createdAtUtc:
           type: string
           format: date-time
+      additionalProperties: false
+    SendMessageRequest:
+      required:
+        - message
+      type: object
+      properties:
+        message:
+          type: string
+          nullable: true
       additionalProperties: false
     SetUsernameRequest:
       required:

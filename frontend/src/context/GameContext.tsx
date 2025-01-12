@@ -19,7 +19,7 @@ interface GameContextType {
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
 export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [currentGame, setCurrentGame] = useState<Game | null>(null);
+    const [currentGame, setCurrentGame] = useState<Game>(null);
     const [isInGame, setIsInGame] = useState<boolean>(false);
 
     const refreshGameDetails = useCallback(async () => {

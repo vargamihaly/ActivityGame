@@ -130,7 +130,7 @@ public class GameService(
         logger.LogInformation("Updating settings for game {GameId}", gameId);
         var game = await GetGameDetailsAsync(gameId);
         gameValidator.ValidateGameState(game, GameStatus.Waiting);
-        gameValidator.ValidateGameSettings(game);
+        gameValidator.ValidateGameSettings(timerInMinutes, maxScore, game.Players);
 
         game.TimerInMinutes = timerInMinutes;
         game.MaxScore = maxScore;
@@ -150,7 +150,7 @@ public class GameService(
             ?? throw new UserNotFoundException(currentUserId);
 
         gameValidator.ValidateGameState(game, GameStatus.Waiting);
-        gameValidator.ValidateGameSettings(game);
+        gameValidator.ValidateGameSettings(game.TimerInMinutes, game.MaxScore, game.Players);
 
         await dataProvider.UpdateGameAsync(game.Id, GameUpdate.WithStatus(GameStatus.InProgress));
 
