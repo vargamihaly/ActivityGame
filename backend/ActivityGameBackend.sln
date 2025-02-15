@@ -19,8 +19,6 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Application", "Application\
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Persistence.Mssql", "Persistence.Mssql\Persistence.Mssql.csproj", "{D693D6DA-C2F9-40C9-BEF6-F4F7CC390AFA}"
 EndProject
-Project("{E53339B2-1760-4266-BCC7-CA923CBCF16C}") = "docker-compose", "docker-compose.dcproj", "{3E169A98-B011-4899-ADCD-B48012545921}"
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".config", ".config", "{15D00825-9217-420B-BEFB-D568D673CFE8}"
 	ProjectSection(SolutionItems) = preProject
 		dotnet-tools.json = dotnet-tools.json
@@ -57,12 +55,6 @@ Global
 		{D693D6DA-C2F9-40C9-BEF6-F4F7CC390AFA}.NoVariablesDefault|Any CPU.Build.0 = Release|Any CPU
 		{D693D6DA-C2F9-40C9-BEF6-F4F7CC390AFA}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D693D6DA-C2F9-40C9-BEF6-F4F7CC390AFA}.Release|Any CPU.Build.0 = Release|Any CPU
-		{3E169A98-B011-4899-ADCD-B48012545921}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{3E169A98-B011-4899-ADCD-B48012545921}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{3E169A98-B011-4899-ADCD-B48012545921}.NoVariablesDefault|Any CPU.ActiveCfg = Release|Any CPU
-		{3E169A98-B011-4899-ADCD-B48012545921}.NoVariablesDefault|Any CPU.Build.0 = Release|Any CPU
-		{3E169A98-B011-4899-ADCD-B48012545921}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{3E169A98-B011-4899-ADCD-B48012545921}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

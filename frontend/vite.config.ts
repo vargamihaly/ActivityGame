@@ -13,12 +13,12 @@ export default defineConfig({
         port: 5173,
         proxy: {
             '/api': {
-                target: 'https://localhost:8082',
+                target: 'https://localhost:5002',
                 changeOrigin: true,
                 secure: false,
             },
             '/hubs': {
-                target: 'http://localhost:8081',  // HTTP for SignalR
+                target: 'http://localhost:5001',  // HTTP for SignalR
                 ws: true,
                 changeOrigin: true,
             },

@@ -14,10 +14,10 @@ Console.WriteLine($"Environment: {environment}");
 
 var configuration = new ConfigurationBuilder()
     .SetBasePath(Directory.GetCurrentDirectory())
+    .AddEnvironmentVariables()
     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
     .AddJsonFile($"appsettings.{environment}.json", optional: false)
     .AddJsonFile($"appsettings.{environment}.local.json", optional: true)
-    .AddEnvironmentVariables()
     .Build();
 
 var clientId = configuration["ClientAuthConfig:ClientId"];
