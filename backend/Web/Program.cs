@@ -1,3 +1,4 @@
+using Azure.Identity;
 using ActivityGameBackend.Persistence.Mssql;
 using ActivityGameBackend.Persistence.Mssql.ServiceCollectionExtensions;
 using ActivityGameBackend.Web.Filters;
@@ -9,21 +10,29 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 var environment = builder.Environment.EnvironmentName;
-
 Console.WriteLine($"Environment: {environment}");
 
-var configuration = new ConfigurationBuilder()
+builder.Configuration
     .SetBasePath(Directory.GetCurrentDirectory())
-    .AddEnvironmentVariables()
     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-    .AddJsonFile($"appsettings.{environment}.json", optional: false)
-    .AddJsonFile($"appsettings.{environment}.local.json", optional: true)
-    .Build();
+    .AddJsonFile($"appsettings.{environment}.json", optional: true, reloadOnChange: true)
+    .AddEnvironmentVariables();
 
-var clientId = configuration["ClientAuthConfig:ClientId"];
-var clientSecret = configuration["ClientAuthConfig:ClientSecret"];
+if (builder.Environment.IsProduction())
+{
+    var keyVaultUrl = builder.Configuration["AzureKeyVault:Url"];
+    if (!string.IsNullOrEmpty(keyVaultUrl))
+    {
+        builder.Configuration.AddAzureKeyVault(
+            new Uri(keyVaultUrl),
+            new DefaultAzureCredential());
+    }
+}
 
-if (clientId is null || clientSecret is null)
+var clientId = builder.Configuration["ClientAuthConfig:ClientId"];
+var clientSecret = builder.Configuration["ClientAuthConfig:ClientSecret"];
+
+if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
 {
     throw new InvalidOperationException("Google ClientId and ClientSecret most be provided.");
 }
@@ -32,7 +41,7 @@ builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
 builder.Services
-    .AddMsSqlAppDbContext(configuration, environment)
+    .AddMsSqlAppDbContext(builder.Configuration, environment)
     .AddMsSqlDbServiceProvider();
 
 builder.Services.AddAuthentication(options =>

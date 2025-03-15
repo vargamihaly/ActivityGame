@@ -1,5 +1,4 @@
 using ActivityGameBackend.Application.Exceptions;
-using ActivityGameBackend.Application.Games;
 using Microsoft.Extensions.Logging;
 
 namespace ActivityGameBackend.Application.Statistics;

@@ -1,8 +1,4 @@
-using ActivityGameBackend.Application.Games;
 using ActivityGameBackend.Application.Statistics;
-using ActivityGameBackend.Application.Users;
-using ActivityGameBackend.Web.Controllers.Game;
-using ActivityGameBackend.Web.Controllers.Game.Response;
 using ActivityGameBackend.Web.Controllers.Statistics.Response;
 using ActivityGameBackend.Web.Services;
 using ActivityGameBackend.Web.Shared;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
+import {Link, Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useGame } from '@/context/GameContext';
 import { Button } from "@/components/ui/button"
@@ -19,7 +19,9 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             <header className="bg-primary text-primary-foreground shadow-md">
                 <div className="container mx-auto px-4">
                     <div className="flex items-center justify-between h-16">
-                        <h1 className="text-2xl font-bold">Activity Game</h1>
+                        <Link to="/" className="text-2xl font-bold hover:no-underline">
+                            Activity Game
+                        </Link>
                         {user && (
                             <div className="flex items-center space-x-4">
                                 <div className="flex items-center mr-4">
